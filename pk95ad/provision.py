@@ -248,17 +248,21 @@ class Setup:
                     raise SetupError("Das Konto Administrator fehlt nach der Einrichtung.")
                 s.replace(res[0].dn, {"unicodePwd": ('"' + req["admin_password"] + '"').encode("utf-16-le")})
 
-            self.say("Prüfe die SYSVOL-Berechtigungen …")
-            if self._exec(["samba-tool", "ntacl", "sysvolcheck", "-s", cfg.smb_conf], timeout=300) != 0:
-                self.say("sysvolcheck meldet Abweichungen, setze die Berechtigungen neu …")
-                if self._exec(["samba-tool", "ntacl", "sysvolreset", "-s", cfg.smb_conf], timeout=300) != 0:
-                    raise SetupError("Die SYSVOL-Berechtigungen konnten nicht gesetzt werden.")
-            sysvol_dir = os.path.join(cfg.samba_dir, "sysvol")
+            # sysvolcheck cannot be used: it reads security.NTACL directly and ignores
+            # acl_xattr:security_acl_name. sysvolreset and "ntacl get" go through the VFS and honour it.
+            self.say("Setze die SYSVOL-Berechtigungen …")
+            if self._exec(["samba-tool", "ntacl", "sysvolreset", "-s", cfg.smb_conf], timeout=300) != 0:
+                raise SetupError("Die SYSVOL-Berechtigungen konnten nicht gesetzt werden.")
+            sysvol_dir = os.path.join(cfg.samba_dir, "sysvol", settings["realm"].lower())
             try:
                 os.getxattr(sysvol_dir, "user.NTACL")
-                self.say("NT-ACL von SYSVOL liegt in user.NTACL.")
-            except OSError:
-                self.say("Warnung: user.NTACL fehlt auf SYSVOL.")
+            except OSError as exc:
+                raise SetupError(f"Die NT-ACL von SYSVOL fehlt in user.NTACL ({exc.strerror}).") from exc
+            if self._exec(["samba-tool", "ntacl", "get", "--as-sddl", "-s", cfg.smb_conf, sysvol_dir],
+                          timeout=60) != 0:
+                self.say("Warnung: samba-tool ntacl get kann die NT-ACL von SYSVOL nicht lesen.")
+            else:
+                self.say("NT-ACL von SYSVOL liegt in user.NTACL und ist lesbar.")
 
             with self._lock:
                 self.state = "ready"

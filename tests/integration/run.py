@@ -3,7 +3,7 @@
     python3 tests/integration/run.py <base-url> <token> <container> <events-port>
 
 Provisions a domain through the API, exercises every API area and checks the SYSVOL ACLs inside the
-container (user.NTACL, sysvolcheck, SMB access). Exits non-zero on the first failure.
+container (user.NTACL, ntacl get, gpo aclcheck, SMB access). Exits non-zero on the first failure.
 """
 
 from __future__ import annotations
@@ -260,7 +260,7 @@ def main():
     dexec("sh", "-c", f"ls -la /var/lib/samba/sysvol/{REALM}/Policies/{guid}/* && "
                       f"cat /var/lib/samba/sysvol/{REALM}/Policies/{guid}/GPT.INI")
     dexec("samba-tool", "gpo", "show", guid, "-H", "ldap://127.0.0.1", "-U", f"Administrator%{PASSWORD}")
-    dexec("samba-tool", "gpo", "aclcheck", "-H", "ldap://127.0.0.1", "-U", f"Administrator%{PASSWORD}", ok=False)
+    dexec("samba-tool", "gpo", "aclcheck", "-H", "ldap://127.0.0.1", "-U", f"Administrator%{PASSWORD}")
     dexec("smbclient", "//127.0.0.1/sysvol", "-U", f"PK95TEST\\max%{USER_PW_2}", "-c",
           f"ls {REALM}\\Policies\\{guid}\\*", ok=False)  # max is disabled → expected to fail
     dexec("smbclient", "//127.0.0.1/sysvol", "-U", f"PK95TEST\\Administrator%{PASSWORD}", "-c",
@@ -278,7 +278,8 @@ def main():
     dexec("getfattr", "-n", "user.NTACL", "-e", "hex", f"/var/lib/samba/sysvol/{REALM}/Policies")
     rc, _ = dexec("getfattr", "-n", "security.NTACL", f"/var/lib/samba/sysvol/{REALM}/Policies", ok=False)
     check(rc != 0, "no security.NTACL (not writable in this container)")
-    dexec("samba-tool", "ntacl", "sysvolcheck")
+    # sysvolcheck reads security.NTACL directly and cannot work here; ntacl get uses the VFS (docs/design.md).
+    dexec("samba-tool", "ntacl", "get", "--as-sddl", f"/var/lib/samba/sysvol/{REALM}/Policies")
     dexec("smbclient", "//127.0.0.1/netlogon", "-U", f"PK95TEST\\Administrator%{PASSWORD}", "-c", "ls")
 
     print("== cleanup and move")

@@ -148,7 +148,8 @@ provisioning is removed first).
 
 Steps (each one appears in `log`): write a minimal `smb.conf` with the PK95 options (see `docs/design.md`),
 `samba-tool domain provision --use-rfc2307 --dns-backend=SAMBA_INTERNAL …`, write the final `smb.conf`,
-copy `krb5.conf`, start Samba, wait until LDAP answers, `samba-tool ntacl sysvolcheck`, send `ad.setup.done`.
+copy `krb5.conf`, `samba-tool ntacl sysvolreset`, check that `user.NTACL` is set and readable (`samba-tool ntacl get`),
+start Samba, wait until LDAP answers, send `ad.setup.done`.
 
 ## Status
 

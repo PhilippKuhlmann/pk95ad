@@ -90,7 +90,10 @@ acl_xattr:security_acl_name = user.NTACL
 ```
 
 in `[global]` – also during `samba-tool domain provision` (`--option`), so the SYSVOL ACLs that provisioning
-sets already go to `user.NTACL`. `samba-tool ntacl sysvolreset/sysvolcheck` read the same option from `smb.conf`.
+sets already go to `user.NTACL`. `samba-tool ntacl sysvolreset` and `ntacl get` read the same option from `smb.conf`
+(they go through the VFS). **Not usable:** `samba-tool ntacl sysvolcheck` reads `security.NTACL` directly and ignores
+the option; it always fails with `No data available` (ENODATA). To check the ACLs use `samba-tool gpo aclcheck -H
+ldap://127.0.0.1 -U Administrator` or `samba-tool ntacl get --as-sddl <path>`.
 
 Assumptions (checked by provisioning; a failure ends in `state: failed` with a German message):
 
@@ -103,7 +106,8 @@ Assumptions (checked by provisioning; a failure ends in `state: failed` with a G
 3. Samba runs as root inside the container (no file capabilities in an unprivileged LXC).
 
 CI provisions a domain inside a plain Docker container (no `CAP_SYS_ADMIN`, so `security.*` fails there as
-well) and checks `getfattr -n user.NTACL` on SYSVOL and `samba-tool ntacl sysvolcheck`. A real domain join
+well) and checks `getfattr -n user.NTACL` on SYSVOL, `samba-tool ntacl get`, `samba-tool gpo aclcheck` and SMB access
+to SYSVOL/NETLOGON. A real domain join
 needs the LXC and a Windows client.
 
 ## Files and volumes
