@@ -90,6 +90,22 @@ class App:
     def _chrony_argv(self) -> list[str]:
         return ["chronyd", "-d", "-x", "-u", "root", "-f", self.cfg.chrony_conf]
 
+    def _write_hosts_entry(self, path: str = "/etc/hosts") -> None:
+        """The DC resolves its own FQDN without DNS: Samba's DNS is on port 5300, and the system resolver
+        (PK95 DNS on 53) may not forward the realm yet. Docker gives every container its own /etc/hosts."""
+        try:
+            text = open(path, encoding="utf-8").read()
+        except OSError as exc:
+            log.warning("cannot read %s: %s", path, exc)
+            return
+        new = smbconf.hosts_with_dc(text, self.settings)
+        if new != text:
+            try:
+                with open(path, "w", encoding="utf-8") as fh:  # in place: /etc/hosts is a bind mount
+                    fh.write(new)
+            except OSError as exc:
+                log.warning("cannot write %s: %s", path, exc)
+
     def _chrony_line(self, line: str) -> None:
         """chrony keeps running when it cannot bind port 123; spot that in its log."""
         low = line.lower()
@@ -115,6 +131,8 @@ class App:
         if not self.settings:
             return
         write_text(self.cfg.smb_conf, smbconf.render(self.settings, self.cfg))
+        if self.cfg.manage_processes:
+            self._write_hosts_entry()
         krb = os.path.join(self.cfg.samba_dir, "private", "krb5.conf")
         if os.path.exists(krb):
             try:

@@ -68,6 +68,12 @@ setup (Core manages both apps); the API answers `dns_port` in `/api/domain` for 
 Samba's `dns forwarder` points to `127.0.0.1` (PK95 DNS) by default. No loop: Samba answers its own zones
 itself and only forwards other names; PK95 DNS only forwards the realm to Samba.
 
+The DC's own name: on every start the app writes `<host_ip> <hostname>.<realm> <hostname>` into the container's
+`/etc/hosts` (one line marked `# pk95ad`), so Samba's tools on the DC resolve it without DNS on port 53. Tools
+that look up a DC through SRV records (`samba-tool gpo …` without `-H`) still need the realm forwarded by
+PK95 DNS; the app itself never calls them (GPOs are written in-process), manual calls should pass
+`-H ldap://127.0.0.1`.
+
 Known limit: Windows clients send dynamic DNS updates to port 53 of the SOA server (the DC), i.e. to PK95 DNS,
 which does not forward `UPDATE`. Client A/PTR records therefore do not register themselves; add them with
 `/api/dns/…` when needed (AD logon does not need them). The DC's own records are created by the provisioning;

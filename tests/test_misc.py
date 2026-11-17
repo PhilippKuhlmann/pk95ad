@@ -24,6 +24,15 @@ class SmbConfTest(unittest.TestCase):
         self.assertIn("dns port=5300", opts)
         self.assertIn("ntpsigndsocket /var/lib/samba/ntp_signd", smbconf.chrony(cfg))
 
+    def test_hosts_entry(self):
+        base = "127.0.0.1\tlocalhost\n192.0.2.1\tpk95\n"
+        out = smbconf.hosts_with_dc(base, SETTINGS)
+        self.assertEqual(out, base + "192.0.2.10\tdc1.ad.example.com dc1\t# pk95ad\n")
+        moved = smbconf.hosts_with_dc(out, {**SETTINGS, "host_ip": "192.0.2.11"})
+        self.assertEqual(moved.count("# pk95ad"), 1)
+        self.assertIn("192.0.2.11\tdc1.ad.example.com", moved)
+        self.assertEqual(smbconf.hosts_with_dc(out, SETTINGS), out)
+
 
 class ConfigTest(unittest.TestCase):
     def test_load(self):

@@ -245,7 +245,10 @@ def main():
     check([i["name"] for i in inh["items"]][:1] == ["PK95 Test"] and len(inh["items"]) == 2,
           f"inheritance without block {[i['name'] for i in inh['items']]}")
     guid = gp["guid"]
-    dexec("samba-tool", "gpo", "listall")
+    # samba-tool gpo needs -H: without it, it looks for a DC via DNS on port 53, where the AD zone is
+    # only reachable through PK95 DNS (not in this CI container). The app itself never calls samba-tool gpo.
+    dexec("samba-tool", "gpo", "listall", "-H", "ldap://127.0.0.1", "-U", f"Administrator%{PASSWORD}")
+    dexec("getent", "hosts", f"dc1.{REALM}")  # /etc/hosts entry written by the app
     dexec("sh", "-c", f"ls -la /var/lib/samba/sysvol/{REALM}/Policies/{guid}/* && "
                       f"cat /var/lib/samba/sysvol/{REALM}/Policies/{guid}/GPT.INI")
     dexec("samba-tool", "gpo", "show", guid, "-H", "ldap://127.0.0.1", "-U", f"Administrator%{PASSWORD}")

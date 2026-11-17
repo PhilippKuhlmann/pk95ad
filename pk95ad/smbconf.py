@@ -62,6 +62,18 @@ def render(s: dict, cfg) -> str:
     return "\n".join(lines)
 
 
+HOSTS_MARK = "# pk95ad"
+
+
+def hosts_with_dc(text: str, s: dict) -> str:
+    """/etc/hosts with exactly one PK95 AD line "<ip> <fqdn> <host>" (replaces an older one)."""
+    lines = [line for line in text.splitlines() if not line.rstrip().endswith(HOSTS_MARK)]
+    if s.get("host_ip") and s.get("hostname") and s.get("realm"):
+        fqdn = f"{s['hostname']}.{s['realm']}".lower()
+        lines.append(f"{s['host_ip']}\t{fqdn} {s['hostname'].lower()}\t{HOSTS_MARK}")
+    return "\n".join(lines) + "\n"
+
+
 def chrony(cfg) -> str:
     """chronyd serves the (host-synchronised) local clock and signs replies for domain members."""
     return "\n".join([
