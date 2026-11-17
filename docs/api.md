@@ -19,8 +19,9 @@ see `docs/design.md`.
 - Errors: `{"error": "German message"}` with a fitting status. Validation errors are
   `422 {"error": "Bitte Eingaben prüfen.", "fields": {"<field>": "German message"}}`. Field names are
   the JSON keys of the request body, for array items `member_ids.2`, for nested objects `settings.screen_lock_minutes`.
-- `401` without valid token, `404` unknown id, `413` body over 2 MiB, `415` writing request without
-  `Content-Type: application/json` (Core sends it, also on DELETE).
+- `401` without valid token, `404` unknown id, `413` body over 2 MiB, `415` writing request with a body but
+  without `Content-Type: application/json`. Routes without payload (unlock, backup prepare, DELETE, …) accept
+  no body at all (with or without Content-Type), `{}` and `[]`.
 - `409 {"error": "Die Domäne ist noch nicht eingerichtet."}` for every directory, DNS and GPO route while
   `state` is not `ready`. `409` also for state conflicts (non-empty OU, setup already running, …).
 - `403 {"error": "…"}` when an action on a protected built-in object is refused (e.g. deleting
@@ -147,7 +148,8 @@ provisioning is removed first).
 
 Steps (each one appears in `log`): write a minimal `smb.conf` with the PK95 options (see `docs/design.md`),
 `samba-tool domain provision --use-rfc2307 --dns-backend=SAMBA_INTERNAL …`, write the final `smb.conf`,
-copy `krb5.conf`, start Samba, wait until LDAP answers, `samba-tool ntacl sysvolcheck`, send `ad.setup.done`.
+copy `krb5.conf`, `samba-tool ntacl sysvolreset`, check that `user.NTACL` is set and readable (`samba-tool ntacl get`),
+start Samba, wait until LDAP answers, send `ad.setup.done`.
 
 ## Status
 
@@ -167,10 +169,14 @@ copy `krb5.conf`, start Samba, wait until LDAP answers, `samba-tool ntacl sysvol
     "last_exit": "",
     "services": { "ldap": true, "kerberos": true, "smb": true, "dns": true }
   },
-  "ntp": { "running": true },
+  "ntp": { "running": true, "available": true, "message": "" },
   "domain": { "realm": "ad.example.com", "netbios_domain": "EXAMPLE", "hostname": "dc1", "host_ip": "192.168.1.10" }
 }
 ```
+
+`ntp`: signed NTP for domain members (`chronyd -x`: serves the host-synchronised clock, never sets it).
+It never blocks Samba. `available: false` with a German `message` when chronyd cannot run or port 123/udp is
+taken („NTP nicht verfügbar: Port 123/udp ist im LXC belegt.“); `PK95AD_NTP=0` switches it off.
 
 `samba.state`: `stopped` (not set up), `starting`, `running`, `restarting` (crashed, restarted with
 backoff 5 s … 5 min), `backup` (stopped by `/core/backup/prepare`). `services`: TCP 389 / 88 / 445 on
@@ -199,11 +205,14 @@ unexpected exit. `domain` is `null` before setup.
   "upn_suffixes": ["ad.example.com"],
   "counts": { "users": 14, "groups": 52, "computers": 3, "ous": 4, "gpos": 3 },
   "dns_forwarder": "127.0.0.1",
-  "dns_port": 5300
+  "dns_port": 5300,
+  "ntp": { "running": true, "available": true, "message": "" }
 }
 ```
 
 FSMO values are the DC names (`hostname` of the owning server). With only one DC all are this DC.
+`dns_port` is stable (the Core module uses it for the conditional forwarding rule in PK95 DNS).
+`ntp`: same object as in `/api/status`.
 
 ### `PUT /api/domain/settings`
 
@@ -388,7 +397,7 @@ for groups that are a primary group, such as `Domain Users`, including the accou
 | `GET /api/groups/{id}` | – | `200` details |
 | `POST /api/groups` | `{"name", "description", "email", "type", "scope", "ou_id", "member_ids": []}` | `201` details |
 | `PUT /api/groups/{id}` | any of `{"name", "description", "email", "type", "scope"}` | `200` details |
-| `PUT /api/groups/{id}/members` | `{"member_ids": ["…"]}` | `200` details – replaces the direct members (users, groups, computers). Accounts that have this group as primary group (`members[].primary: true`) stay members; they are not in the list and cannot be removed here |
+| `PUT /api/groups/{id}/members` | `{"member_ids": ["…"]}` | `200` details – replaces the direct members (users, groups, computers). Accounts that have this group as primary group (`members[].primary: true`) stay members: their ids in `member_ids` are ignored (never written as direct members), leaving them out does not remove them |
 | `DELETE /api/groups/{id}` | – | `204` |
 
 `name`: 1–64 chars, same characters as `username`; it is CN and `sAMAccountName`, unique in the domain.
@@ -513,6 +522,10 @@ GPO object:
     "help": "Startet nach der Zeit den Bildschirmschoner mit Kennwortschutz." }
 ]
 ```
+
+Values in `PUT …/settings` work like the Windows GPMC: `null` = not configured (the registry values are removed),
+`true` = enabled, `false` = explicitly disabled (the value is written with its disabled value, e.g. `DisableCMD=0`,
+`NoControlPanel=0`, `Deny_All=0`, so it overrides a GPO with lower precedence).
 
 `type`: `bool`, `int` (`min`, `max`, `unit`), `enum` (`options: [{"value", "label"}]`), `string` (`max`,
 optional `pattern`), `text` (multi-line, `max`), `scripts` (list of `{"path", "parameters"}`). `GET /api/gpos/{id}`
