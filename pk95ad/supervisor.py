@@ -20,11 +20,12 @@ STABLE_AFTER = 600.0  # a run this long resets the backoff
 class Process:
     """Runs argv_fn() as a child, forwards its output, restarts it with backoff after unexpected exits."""
 
-    def __init__(self, name: str, argv_fn, on_crash=None, label: str = ""):
+    def __init__(self, name: str, argv_fn, on_crash=None, label: str = "", on_line=None):
         self.name = name
         self.label = label or name
         self.argv_fn = argv_fn
         self.on_crash = on_crash
+        self.on_line = on_line
         self._lock = threading.RLock()
         self._proc: subprocess.Popen | None = None
         self._want = False
@@ -80,6 +81,11 @@ class Process:
         for line in p.stdout:
             sys.stdout.write(f"[{self.name}] {line}" if line.endswith("\n") else f"[{self.name}] {line}\n")
             sys.stdout.flush()
+            if self.on_line:
+                try:
+                    self.on_line(line.rstrip("\n"))
+                except Exception:  # noqa: BLE001 - output watching must never stop the pump
+                    log.exception("%s: line callback failed", self.name)
 
     def _schedule_restart(self) -> None:
         delay = BACKOFF[min(self._fails, len(BACKOFF) - 1)]

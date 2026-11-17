@@ -19,6 +19,14 @@ Danach braucht PK95 DNS eine bedingte Weiterleitung `<realm>` → `127.0.0.1:530
 weiter PK95 DNS nutzen) die AD-Einträge finden. Windows-Clients treten der Domäne dann normal bei
 (Einstellungen → Konto → Auf Arbeit oder Schule zugreifen bzw. `Add-Computer`).
 
+Bekannte Grenze in v1: Windows-Clients schicken ihre dynamischen DNS-Updates an Port 53, also an PK95 DNS,
+das `UPDATE` nicht weiterleitet. Die A-/PTR-Einträge der Clients registrieren sich deshalb nicht selbst. Für
+die Anmeldung an der Domäne ist das unkritisch; braucht man Client-Einträge, legt man sie in Core unter
+AD → DNS an (`/api/dns/…`).
+
+Zeit: chrony liefert signiertes NTP für die Domänenmitglieder (Port 123/udp, stellt die Uhr des LXC nie).
+Ist der Port belegt, läuft Samba trotzdem; Core zeigt dann „NTP nicht verfügbar“.
+
 Belegte Ports im LXC: 88, 123/udp, 135, 137–139, 389, 445, 464, 636, 3268, 3269, 5300 (Samba-DNS),
 49152–49200 (RPC) und 8389 (API).
 

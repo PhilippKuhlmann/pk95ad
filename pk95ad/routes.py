@@ -46,12 +46,14 @@ def build(app: App) -> Router:
     r.add("GET", "/api/status", lambda req: app.status())
 
     # Domain
-    r.add("GET", "/api/domain", ready(lambda req, s: directory.domain_info(s)))
+    def domain_info(s):
+        return {**directory.domain_info(s), "ntp": app.ntp_info()}
+    r.add("GET", "/api/domain", ready(lambda req, s: domain_info(s)))
 
     def domain_settings(req):
         app.update_forwarder(req.json())
         with app.directory.session() as s:
-            return directory.domain_info(s)
+            return domain_info(s)
     r.add("PUT", "/api/domain/settings", domain_settings)
     r.add("GET", "/api/domain/password-policy", ready(lambda req, s: directory.password_policy(s)))
     r.add("PUT", "/api/domain/password-policy",

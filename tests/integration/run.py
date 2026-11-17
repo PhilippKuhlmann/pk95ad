@@ -9,6 +9,7 @@ container (user.NTACL, sysvolcheck, SMB access). Exits non-zero on the first fai
 from __future__ import annotations
 
 import json
+import secrets
 import subprocess
 import sys
 import threading
@@ -19,7 +20,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BASE, TOKEN, CONTAINER, EVENTS_PORT = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
 REALM = "ad.pk95.test"
-PASSWORD = "Pk95-Test-2026!"
+
+
+def _random_password() -> str:
+    # Generated per run: no passwords in the repository. Prefix guarantees the complexity rules.
+    return "Pk-9" + secrets.token_urlsafe(18)
+
+
+PASSWORD = _random_password()
+USER_PW_1 = _random_password()
+USER_PW_2 = _random_password()
 EVENTS: list[dict] = []
 
 
@@ -160,16 +170,16 @@ def main():
     check("password" in u["fields"], f"weak password rejected: {u['fields']}")
     _, u = call("POST", "/api/users", {"username": "max", "given_name": "Max", "surname": "Muster",
                                        "email": "max@example.com", "ou_id": vertrieb["id"],
-                                       "password": "Sommer-2026-x", "must_change_password": True,
+                                       "password": USER_PW_1, "must_change_password": True,
                                        "script_path": "logon.bat", "group_ids": [team["id"]]}, expect=201)
     check(u["upn"] == f"max@{REALM}" and u["must_change_password"] and u["ou_path"] == "Firma/Verkauf",
           f"user {u['upn']} {u['ou_path']}")
     check([g["name"] for g in u["groups"]] == ["Verkauf-Team"], "user groups")
-    call("POST", "/api/users", {"username": "max", "given_name": "X", "password": "Sommer-2026-y"}, expect=422)
+    call("POST", "/api/users", {"username": "max", "given_name": "X", "password": _random_password()}, expect=422)
     _, u = call("PUT", f"/api/users/{u['id']}", {"enabled": False, "description": "Test",
                                                  "display_name": "Max Mustermann"}, expect=200)
     check(not u["enabled"] and u["display_name"] == "Max Mustermann", "user update")
-    call("POST", f"/api/users/{u['id']}/password", {"password": "Winter-2026-z"}, expect=204)
+    call("POST", f"/api/users/{u['id']}/password", {"password": USER_PW_2}, expect=204)
     _, u = call("GET", f"/api/users/{u['id']}", expect=200)
     check(not u["enabled"], "password reset keeps account disabled")
     call("POST", f"/api/users/{u['id']}/unlock", expect=204)
@@ -240,7 +250,7 @@ def main():
                       f"cat /var/lib/samba/sysvol/{REALM}/Policies/{guid}/GPT.INI")
     dexec("samba-tool", "gpo", "show", guid, "-H", "ldap://127.0.0.1", "-U", f"Administrator%{PASSWORD}")
     dexec("samba-tool", "gpo", "aclcheck", "-H", "ldap://127.0.0.1", "-U", f"Administrator%{PASSWORD}", ok=False)
-    dexec("smbclient", f"//127.0.0.1/sysvol", "-U", f"PK95TEST\\max%Winter-2026-z", "-c",
+    dexec("smbclient", f"//127.0.0.1/sysvol", "-U", f"PK95TEST\\max%{USER_PW_2}", "-c",
           f"ls {REALM}\\Policies\\{guid}\\*", ok=False)  # max is disabled → expected to fail
     dexec("smbclient", f"//127.0.0.1/sysvol", "-U", f"PK95TEST\\Administrator%{PASSWORD}", "-c",
           f"ls {REALM}\\Policies\\{guid}\\User\\*")

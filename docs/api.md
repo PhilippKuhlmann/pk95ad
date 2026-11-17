@@ -167,10 +167,14 @@ copy `krb5.conf`, start Samba, wait until LDAP answers, `samba-tool ntacl sysvol
     "last_exit": "",
     "services": { "ldap": true, "kerberos": true, "smb": true, "dns": true }
   },
-  "ntp": { "running": true },
+  "ntp": { "running": true, "available": true, "message": "" },
   "domain": { "realm": "ad.example.com", "netbios_domain": "EXAMPLE", "hostname": "dc1", "host_ip": "192.168.1.10" }
 }
 ```
+
+`ntp`: signed NTP for domain members (`chronyd -x`: serves the host-synchronised clock, never sets it).
+It never blocks Samba. `available: false` with a German `message` when chronyd cannot run or port 123/udp is
+taken („NTP nicht verfügbar: Port 123/udp ist im LXC belegt.“); `PK95AD_NTP=0` switches it off.
 
 `samba.state`: `stopped` (not set up), `starting`, `running`, `restarting` (crashed, restarted with
 backoff 5 s … 5 min), `backup` (stopped by `/core/backup/prepare`). `services`: TCP 389 / 88 / 445 on
@@ -199,11 +203,14 @@ unexpected exit. `domain` is `null` before setup.
   "upn_suffixes": ["ad.example.com"],
   "counts": { "users": 14, "groups": 52, "computers": 3, "ous": 4, "gpos": 3 },
   "dns_forwarder": "127.0.0.1",
-  "dns_port": 5300
+  "dns_port": 5300,
+  "ntp": { "running": true, "available": true, "message": "" }
 }
 ```
 
 FSMO values are the DC names (`hostname` of the owning server). With only one DC all are this DC.
+`dns_port` is stable (the Core module uses it for the conditional forwarding rule in PK95 DNS).
+`ntp`: same object as in `/api/status`.
 
 ### `PUT /api/domain/settings`
 

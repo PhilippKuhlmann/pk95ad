@@ -50,7 +50,8 @@ class App:
         self.monitor = Monitor(self)
         self.dbcheck = DbCheck(self)
         self.samba = Process("samba", self._samba_argv, on_crash=self.monitor.samba_crashed, label="Samba")
-        self.chrony = Process("chronyd", self._chrony_argv, label="chronyd")
+        self.chrony = Process("chronyd", self._chrony_argv, label="chronyd", on_line=self._chrony_line)
+        self.ntp_error = ""
         self.services = {"ldap": False, "kerberos": False, "smb": False, "dns": False}
         self._backup_timer: threading.Timer | None = None
         self._lock = threading.Lock()
@@ -89,6 +90,26 @@ class App:
     def _chrony_argv(self) -> list[str]:
         return ["chronyd", "-d", "-x", "-u", "root", "-f", self.cfg.chrony_conf]
 
+    def _chrony_line(self, line: str) -> None:
+        """chrony keeps running when it cannot bind port 123; spot that in its log."""
+        low = line.lower()
+        if "could not open" in low or "address already in use" in low or "could not bind" in low:
+            self.ntp_error = "NTP nicht verfügbar: Port 123/udp ist im LXC belegt."
+
+    def ntp_info(self) -> dict:
+        """Status of signed NTP for domain members. Never blocks Samba."""
+        if not self.cfg.ntp:
+            return {"running": False, "available": False, "message": "NTP ist abgeschaltet (PK95AD_NTP=0)."}
+        running = self.chrony.running()
+        if self.ntp_error:
+            message = self.ntp_error
+        elif not running and self.state() == "ready" and self.cfg.manage_processes:
+            message = "NTP nicht verfügbar: chronyd läuft nicht" + (
+                f" ({self.chrony.last_exit})." if self.chrony.last_exit else ".")
+        else:
+            message = ""
+        return {"running": running, "available": running and not self.ntp_error, "message": message}
+
     def prepare_runtime(self) -> None:
         """smb.conf, krb5.conf and chrony.conf from the settings (on every start)."""
         if not self.settings:
@@ -117,7 +138,8 @@ class App:
         self.prepare_runtime()
         self.samba.start()
         if self.cfg.ntp:
-            self.chrony.start()
+            self.ntp_error = ""
+            self.chrony.start()  # failures only show in ntp_info(), Samba does not depend on it
 
     def stop_services(self) -> None:
         self.chrony.stop(timeout=10)
@@ -188,7 +210,7 @@ class App:
             "state": st,
             "started_at": self.started_at,
             "samba": samba,
-            "ntp": {"running": self.chrony.running()},
+            "ntp": self.ntp_info(),
             "domain": None if not s else {k: s.get(k, "") for k in ("realm", "netbios_domain", "hostname",
                                                                      "host_ip")},
         }
