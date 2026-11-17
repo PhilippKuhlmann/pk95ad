@@ -123,6 +123,22 @@ class HttpTest(unittest.TestCase):
     def test_backup_prepare_before_setup(self):
         self.assertEqual(self.call("POST", "/core/backup/prepare", {})[0], 204)
 
+    def test_bodyless_writes(self):
+        # Core sends "[]" for POST without payload and DELETE without any body or Content-Type.
+        self.assertEqual(self.call("POST", "/core/backup/prepare", [])[0], 204)
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn.request("DELETE", "/api/users/5f0e1a6c-0000-0000-0000-000000000001",
+                     headers={"Authorization": "Bearer " + TOKEN})
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 409)  # reaches the handler (not 415): domain not set up
+        resp.read()
+        conn.request("POST", "/core/backup/prepare", body=b"", headers={"Authorization": "Bearer " + TOKEN,
+                                                                        "Content-Length": "0"})
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 204)
+        resp.read()
+        conn.close()
+
     def test_invalid_json(self):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
         conn.request("POST", "/api/setup", body=b"{nope", headers={"Authorization": "Bearer " + TOKEN,

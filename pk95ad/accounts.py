@@ -662,12 +662,15 @@ def _set_members(s: Session, msg, ids) -> None:
         f.raise_if_any()
     targets = {}
     gdn = str(msg.dn)
+    group_rid = s.rid(s.sid(msg)) if s.sid(msg).startswith(s.domain_sid + "-") else -1
     for i, mid in enumerate(ids):
         try:
-            m = s.find(mid, attrs=["objectClass", "objectGUID"], what="Mitglied")
+            m = s.find(mid, attrs=["objectClass", "objectGUID", "primaryGroupID"], what="Mitglied")
         except ApiError:
             f.add(f"member_ids.{i}", "Objekt nicht gefunden.")
             continue
+        if s.num(m, "primaryGroupID", -2) == group_rid:
+            continue  # member through its primary group: never written as a direct member
         kind = s.kind(m)
         if kind not in ("user", "group", "computer"):
             f.add(f"member_ids.{i}", "Nur Benutzer, Gruppen und Computer können Mitglied sein.")

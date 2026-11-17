@@ -50,8 +50,8 @@ class Request:
         return self.query.get(name, "").lower() in ("1", "true", "yes")
 
     def json(self) -> dict:
-        if self.body is None:
-            return {}
+        if self.body is None or self.body == [] or self.body == {}:
+            return {}  # Core sends "[]" for POST routes without payload
         if not isinstance(self.body, dict):
             raise ApiError(400, "Der Inhalt muss ein JSON-Objekt sein.")
         return self.body
@@ -183,11 +183,14 @@ def make_handler(router: Router, token: str, core_mode: bool):
             body = None
             if method in ("POST", "PUT", "DELETE", "PATCH"):
                 ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-                if ctype != "application/json":
+                length = self.headers.get("Content-Length")
+                has_body = bool(self.headers.get("Transfer-Encoding")) or (
+                    bool(length) and length.isdigit() and int(length) > 0)
+                # A request without a body needs no Content-Type (DELETE from Core); with a body it must be JSON.
+                if has_body and ctype != "application/json":
                     self._drain()
                     self._error(415, "Bitte Content-Type: application/json senden.")
                     return
-                length = self.headers.get("Content-Length")
                 if self.headers.get("Transfer-Encoding"):
                     self._error(411, "Bitte Content-Length senden.")
                     self.close_connection = True

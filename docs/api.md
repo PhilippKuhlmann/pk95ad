@@ -19,8 +19,9 @@ see `docs/design.md`.
 - Errors: `{"error": "German message"}` with a fitting status. Validation errors are
   `422 {"error": "Bitte Eingaben prüfen.", "fields": {"<field>": "German message"}}`. Field names are
   the JSON keys of the request body, for array items `member_ids.2`, for nested objects `settings.screen_lock_minutes`.
-- `401` without valid token, `404` unknown id, `413` body over 2 MiB, `415` writing request without
-  `Content-Type: application/json` (Core sends it, also on DELETE).
+- `401` without valid token, `404` unknown id, `413` body over 2 MiB, `415` writing request with a body but
+  without `Content-Type: application/json`. Routes without payload (unlock, backup prepare, DELETE, …) accept
+  no body at all (with or without Content-Type), `{}` and `[]`.
 - `409 {"error": "Die Domäne ist noch nicht eingerichtet."}` for every directory, DNS and GPO route while
   `state` is not `ready`. `409` also for state conflicts (non-empty OU, setup already running, …).
 - `403 {"error": "…"}` when an action on a protected built-in object is refused (e.g. deleting
@@ -395,7 +396,7 @@ for groups that are a primary group, such as `Domain Users`, including the accou
 | `GET /api/groups/{id}` | – | `200` details |
 | `POST /api/groups` | `{"name", "description", "email", "type", "scope", "ou_id", "member_ids": []}` | `201` details |
 | `PUT /api/groups/{id}` | any of `{"name", "description", "email", "type", "scope"}` | `200` details |
-| `PUT /api/groups/{id}/members` | `{"member_ids": ["…"]}` | `200` details – replaces the direct members (users, groups, computers). Accounts that have this group as primary group (`members[].primary: true`) stay members; they are not in the list and cannot be removed here |
+| `PUT /api/groups/{id}/members` | `{"member_ids": ["…"]}` | `200` details – replaces the direct members (users, groups, computers). Accounts that have this group as primary group (`members[].primary: true`) stay members: their ids in `member_ids` are ignored (never written as direct members), leaving them out does not remove them |
 | `DELETE /api/groups/{id}` | – | `204` |
 
 `name`: 1–64 chars, same characters as `username`; it is CN and `sAMAccountName`, unique in the domain.
@@ -520,6 +521,10 @@ GPO object:
     "help": "Startet nach der Zeit den Bildschirmschoner mit Kennwortschutz." }
 ]
 ```
+
+Values in `PUT …/settings` work like the Windows GPMC: `null` = not configured (the registry values are removed),
+`true` = enabled, `false` = explicitly disabled (the value is written with its disabled value, e.g. `DisableCMD=0`,
+`NoControlPanel=0`, `Deny_All=0`, so it overrides a GPO with lower precedence).
 
 `type`: `bool`, `int` (`min`, `max`, `unit`), `enum` (`options: [{"value", "label"}]`), `string` (`max`,
 optional `pattern`), `text` (multi-line, `max`), `scripts` (list of `{"path", "parameters"}`). `GET /api/gpos/{id}`
