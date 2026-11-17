@@ -77,12 +77,20 @@ def check(cond, msg):
     print("  ok: " + msg)
 
 
+def _redact(text: str) -> str:
+    for secret in (PASSWORD, USER_PW_1, USER_PW_2, TOKEN):
+        text = text.replace(secret, "********")
+    return text
+
+
 def dexec(*argv, ok=True):
-    res = subprocess.run(["docker", "exec", CONTAINER, *argv], capture_output=True, text=True)
+    res = subprocess.run(["docker", "exec", CONTAINER, *argv], capture_output=True, text=True, errors="replace")
     out = (res.stdout + res.stderr).strip()
-    print(f"  $ {' '.join(argv)} -> {res.returncode}\n" + "\n".join("    " + x for x in out.splitlines()[-15:]))
+    shown = _redact(f"  $ {' '.join(argv)} -> {res.returncode}\n"
+                    + "\n".join("    " + x for x in out.splitlines()[-15:]))
+    print(shown)
     if ok and res.returncode != 0:
-        fail(f"command failed: {' '.join(argv)}")
+        fail(_redact(f"command failed: {' '.join(argv)}"))
     return res.returncode, out
 
 
@@ -267,7 +275,7 @@ def main():
     call("PUT", "/api/scripts/x.exe", {"content": "x"}, expect=422)
 
     print("== SYSVOL ACLs in user.NTACL")
-    dexec("getfattr", "-n", "user.NTACL", "--only-values", "-e", "hex", f"/var/lib/samba/sysvol/{REALM}/Policies")
+    dexec("getfattr", "-n", "user.NTACL", "-e", "hex", f"/var/lib/samba/sysvol/{REALM}/Policies")
     rc, _ = dexec("getfattr", "-n", "security.NTACL", f"/var/lib/samba/sysvol/{REALM}/Policies", ok=False)
     check(rc != 0, "no security.NTACL (not writable in this container)")
     dexec("samba-tool", "ntacl", "sysvolcheck")
