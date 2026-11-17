@@ -250,9 +250,9 @@ def main():
                       f"cat /var/lib/samba/sysvol/{REALM}/Policies/{guid}/GPT.INI")
     dexec("samba-tool", "gpo", "show", guid, "-H", "ldap://127.0.0.1", "-U", f"Administrator%{PASSWORD}")
     dexec("samba-tool", "gpo", "aclcheck", "-H", "ldap://127.0.0.1", "-U", f"Administrator%{PASSWORD}", ok=False)
-    dexec("smbclient", f"//127.0.0.1/sysvol", "-U", f"PK95TEST\\max%{USER_PW_2}", "-c",
+    dexec("smbclient", "//127.0.0.1/sysvol", "-U", f"PK95TEST\\max%{USER_PW_2}", "-c",
           f"ls {REALM}\\Policies\\{guid}\\*", ok=False)  # max is disabled → expected to fail
-    dexec("smbclient", f"//127.0.0.1/sysvol", "-U", f"PK95TEST\\Administrator%{PASSWORD}", "-c",
+    dexec("smbclient", "//127.0.0.1/sysvol", "-U", f"PK95TEST\\Administrator%{PASSWORD}", "-c",
           f"ls {REALM}\\Policies\\{guid}\\User\\*")
 
     print("== NETLOGON scripts")
@@ -279,7 +279,7 @@ def main():
     call("DELETE", f"/api/gpos/{gp['id']}", expect=204)
     call("DELETE", f"/api/ous/{other['id']}?recursive=1", expect=204)
     call("DELETE", f"/api/ous/{firma['id']}?recursive=1", expect=204)
-    call("DELETE", f"/api/scripts/logon.bat", expect=204)
+    call("DELETE", "/api/scripts/logon.bat", expect=204)
 
     print("== dbcheck")
     call("POST", "/api/domain/dbcheck", {"fix": False}, expect=202)
