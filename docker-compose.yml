@@ -1,0 +1,24 @@
+# PK95 AD eigenständig (ohne PK95 Core), z. B. zum Testen. Start: docker compose up -d
+# Die API braucht dann PK95AD_TOKEN (mindestens 32 Zeichen) als Bearer-Token; eine eigene Oberfläche
+# gibt es in v1 nicht. Einrichtung: POST /api/setup (siehe docs/api.md).
+#
+# network_mode host: ein Domänencontroller muss auf seiner echten Adresse mit den AD-Ports erreichbar
+# sein. Samba-DNS läuft auf 5300; ein DNS-Server auf Port 53 muss die AD-Zone dorthin weiterleiten.
+services:
+  ad:
+    image: ghcr.io/philippkuhlmann/pk95-ad:latest
+    container_name: pk95-ad
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      PK95AD_TOKEN: bitte-durch-einen-langen-zufaelligen-token-ersetzen
+      TZ: Europe/Berlin
+    volumes:
+      - ad_samba:/var/lib/samba
+      - ad_config:/etc/samba
+      - ad_data:/var/lib/pk95ad
+
+volumes:
+  ad_samba:
+  ad_config:
+  ad_data:

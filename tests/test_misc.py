@@ -1,0 +1,109 @@
+import os
+import tempfile
+import unittest
+
+from pk95ad import config, gpo, monitor, smbconf, sysvol
+from pk95ad.directory import gentime_ms, ms_to_nt, nt_to_ms, password_message
+from pk95ad.errors import ApiError
+
+SETTINGS = {"realm": "ad.example.com", "netbios_domain": "EXAMPLE", "hostname": "dc1", "host_ip": "192.0.2.10",
+            "dns_forwarder": "127.0.0.1"}
+
+
+class SmbConfTest(unittest.TestCase):
+    def test_render(self):
+        cfg = config.Config()
+        text = smbconf.render(SETTINGS, cfg)
+        for line in ("netbios name = DC1", "realm = AD.EXAMPLE.COM", "workgroup = EXAMPLE", "dns port = 5300",
+                     "interfaces = lo 192.0.2.10", "bind interfaces only = yes",
+                     "rpc server dynamic port range = 49152-49200", "acl_xattr:security_acl_name = user.NTACL",
+                     "path = /var/lib/samba/sysvol/ad.example.com/scripts"):
+            self.assertIn(line, text)
+        opts = smbconf.provision_options(SETTINGS, cfg)
+        self.assertIn("acl_xattr:security_acl_name=user.NTACL", opts)
+        self.assertIn("dns port=5300", opts)
+        self.assertIn("ntpsigndsocket /var/lib/samba/ntp_signd", smbconf.chrony(cfg))
+
+
+class ConfigTest(unittest.TestCase):
+    def test_load(self):
+        cfg = config.load({"PK95AD_LISTEN": "127.0.0.1:9000", "PK95_CORE_MODE": "1", "PK95_CORE_TOKEN": "t" * 48,
+                           "PK95AD_TOKEN": "ignored", "PK95_CORE_URL": "http://127.0.0.1:8080/"})
+        self.assertEqual((cfg.listen_host, cfg.listen_port), ("127.0.0.1", 9000))
+        self.assertTrue(cfg.core_mode)
+        self.assertEqual(cfg.token, "t" * 48)
+        self.assertEqual(cfg.core_url, "http://127.0.0.1:8080")
+        cfg = config.load({"PK95AD_TOKEN": "x" * 40})
+        self.assertFalse(cfg.core_mode)
+        self.assertEqual(cfg.token, "x" * 40)
+        with self.assertRaises(ValueError):
+            config.load({"PK95AD_RPC_PORTS": "all"})
+
+
+class GptIniTest(unittest.TestCase):
+    def test_version(self):
+        self.assertEqual(sysvol.gpt_version("[General]\r\nVersion=65539\r\ndisplayName=New\r\n"), 65539)
+        self.assertEqual(sysvol.gpt_version(""), 0)
+
+    def test_set_version_keeps_other_lines(self):
+        out = sysvol.gpt_set_version("[General]\r\nVersion=1\r\ndisplayName=Neue GPO\r\n", 65537)
+        self.assertEqual(out, "[General]\r\nVersion=65537\r\ndisplayName=Neue GPO\r\n")
+        self.assertEqual(sysvol.gpt_set_version("", 3), "[General]\r\nVersion=3\r\n")
+        self.assertEqual(sysvol.gpt_set_version("[general]\ndisplayName=x\n", 2),
+                         "[general]\r\nVersion=2\r\ndisplayName=x\r\n")
+
+
+class ExtensionNamesTest(unittest.TestCase):
+    def test_set_and_remove(self):
+        items = gpo.ext_parse("[{827D319E-6EAC-11D2-A4EA-00C04F79F83A}{803E14A0-B4FB-11D0-A0D0-00A0C90F574B}]")
+        items = gpo.ext_set(items, gpo.REGISTRY_CSE, gpo.TOOLS[("registry", "computer")], True)
+        text = gpo.ext_format(items)
+        self.assertEqual(text, "[{35378EAC-683F-11D2-A89A-00C04FBBCFA2}{D02B1F72-3407-48AE-BA88-E8213C6761F1}]"
+                               "[{827D319E-6EAC-11D2-A4EA-00C04F79F83A}{803E14A0-B4FB-11D0-A0D0-00A0C90F574B}]")
+        items = gpo.ext_set(gpo.ext_parse(text), gpo.REGISTRY_CSE, gpo.TOOLS[("registry", "computer")], False)
+        self.assertEqual(gpo.ext_format(items),
+                         "[{827D319E-6EAC-11D2-A4EA-00C04F79F83A}{803E14A0-B4FB-11D0-A0D0-00A0C90F574B}]")
+        self.assertEqual(gpo.ext_format(gpo.ext_set([], gpo.SCRIPTS_CSE, "{X}", False)), "")
+
+
+class SysvolTest(unittest.TestCase):
+    def test_ci_join(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "MACHINE"))
+            self.assertEqual(sysvol.ci_join(d, "Machine", "Registry.pol"), os.path.join(d, "MACHINE", "Registry.pol"))
+            p = sysvol.ci_join(d, "User", "Scripts", "scripts.ini", create=True)
+            self.assertTrue(os.path.isdir(os.path.join(d, "User", "Scripts")))
+            self.assertEqual(p, os.path.join(d, "User", "Scripts", "scripts.ini"))
+
+    def test_scripts_api_validation(self):
+        cfg = config.Config()
+        with tempfile.TemporaryDirectory() as d:
+            cfg.samba_dir = d
+            for name in ("../x.bat", "x.exe", ".hidden.bat"):
+                with self.subTest(name=name):
+                    with self.assertRaises(ApiError):
+                        sysvol.script_put(cfg, "ad.example.com", name, {"content": "x"})
+            self.assertEqual(sysvol.scripts_list(cfg, "ad.example.com"), [])
+
+
+class ConversionTest(unittest.TestCase):
+    def test_nt_time(self):
+        self.assertEqual(nt_to_ms("0"), 0)
+        self.assertEqual(nt_to_ms(str(0x7FFFFFFFFFFFFFFF)), 0)
+        self.assertEqual(nt_to_ms(ms_to_nt(1762700000000)), 1762700000000)
+        self.assertEqual(gentime_ms("20251109145320.0Z"), 1762700000000)
+
+    def test_password_messages(self):
+        self.assertIn("mindestens 7", password_message(
+            "check_password_restrictions: the password is too short. It should be equal or longer than 7 characters!"))
+        self.assertIn("komplex", password_message("the password does not meet the complexity criteria!"))
+        self.assertIsNone(password_message("something else"))
+
+    def test_dbcheck_errors(self):
+        self.assertEqual(monitor.count_errors("Checked 412 objects (0 errors)\n", 0), 0)
+        self.assertEqual(monitor.count_errors("Checked 412 objects (3 errors)\n", 1), 3)
+        self.assertEqual(monitor.count_errors("boom", 2), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
