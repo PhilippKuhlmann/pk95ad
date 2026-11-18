@@ -88,7 +88,7 @@ class Monitor:
 
     def _loop(self) -> None:
         while not self._stop.wait(TICK):
-            for step in (self.check_samba, self.check_lockouts, self.check_daily):
+            for step in (self.check_samba, self.check_resolver, self.check_lockouts, self.check_daily):
                 try:
                     step()
                 except Exception:  # noqa: BLE001 - the loop must keep running
@@ -112,7 +112,6 @@ class Monitor:
             self._fail_since = None
             return
         services = app.probe()
-        app.check_resolver()
         healthy = app.samba.running() and services["ldap"] and services["kerberos"]
         now = time.monotonic()
         if healthy:
@@ -129,6 +128,10 @@ class Monitor:
         elif now - self._fail_since >= DOWN_AFTER:
             missing = [k for k in ("ldap", "kerberos") if not services[k]]
             self._mark_down("Samba antwortet nicht (" + ", ".join(missing or ["Prozess"]) + ").")
+
+    def check_resolver(self) -> None:
+        """Own step after check_samba: the DNS probe may take a moment and must not delay mark_running."""
+        self.app.check_resolver()
 
     # Lockouts -----------------------------------------------------------------------------------------
 
