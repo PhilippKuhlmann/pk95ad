@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 
-from pk95ad import config, gpo, idmap, monitor, smbconf, sysvol
+from pk95ad import config, gpo, idmap, monitor, resolver, smbconf, sysvol
 from pk95ad.directory import gentime_ms, ms_to_nt, nt_to_ms, password_message
 from pk95ad.errors import ApiError
 
@@ -67,6 +67,60 @@ class IdmapTest(unittest.TestCase):
         self.assertEqual(bad_rfc["next_xid"], 20000)
         full = idmap.evaluate(20000, 59999, 58000, [], [])
         self.assertIn("fast aufgebraucht", full["message"])
+
+
+class ResolverTest(unittest.TestCase):
+    LXC = "# from the LXC\nnameserver 10.10.250.1\nnameserver 127.0.0.1\nnameserver 9.9.9.9\nnameserver 1.1.1.1\n" \
+          "search kuhlmannit.de\noptions edns0 timeout:5\n"
+
+    def test_render_puts_pk95_dns_first_and_keeps_the_original(self):
+        out = resolver.render(resolver.original_lines(self.LXC), "ad.example.com")
+        lines = [x for x in out.splitlines() if not x.startswith("#")]
+        self.assertEqual(lines, ["nameserver 127.0.0.1", "nameserver 10.10.250.1", "nameserver 9.9.9.9",
+                                 "search ad.example.com kuhlmannit.de", "options timeout:2 attempts:2 edns0"])
+        # Rewriting our own file keeps the LXC's original, not our lines.
+        self.assertEqual(resolver.original_lines(out), self.LXC.splitlines())
+        self.assertEqual(resolver.render(resolver.original_lines(out), "ad.example.com"), out)
+
+    def test_ensure_only_when_pk95_dns_answers_the_zone(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "resolv.conf")
+            with open(p, "w") as fh:
+                fh.write(self.LXC)
+            st = resolver.ensure("ad.example.com", dns_probe=lambda z: "noanswer", path=p)
+            self.assertFalse(st["ok"])
+            self.assertIn("127.0.0.1:53", st["message"])
+            st = resolver.ensure("ad.example.com", dns_probe=lambda z: "nxdomain", path=p)
+            self.assertIn("bedingte Weiterleitung ad.example.com", st["message"])
+            self.assertEqual(open(p).read(), self.LXC)  # untouched
+            st = resolver.ensure("ad.example.com", dns_probe=lambda z: "ok", path=p)
+            self.assertEqual(st, {"ok": True, "nameserver": "127.0.0.1", "message": ""})
+            self.assertTrue(open(p).read().splitlines()[2] == "nameserver 127.0.0.1")
+
+    def test_query_soa(self):
+        import socket
+        import struct
+        import threading
+
+        def serve(sock, rcode, ancount):
+            data, addr = sock.recvfrom(512)
+            flags = 0x8180 | rcode
+            sock.sendto(data[:2] + struct.pack(">HHHHH", flags, 1, ancount, 0, 0) + data[12:], addr)
+
+        for rcode, ancount, expected in ((0, 1, "ok"), (3, 0, "nxdomain"), (2, 0, "noanswer")):
+            with self.subTest(expected=expected):
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.bind(("127.0.0.1", 0))
+                t = threading.Thread(target=serve, args=(sock, rcode, ancount))
+                t.start()
+                self.assertEqual(resolver.query_soa("ad.example.com", port=sock.getsockname()[1]), expected)
+                t.join()
+                sock.close()
+        free = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        free.bind(("127.0.0.1", 0))
+        port = free.getsockname()[1]
+        free.close()
+        self.assertEqual(resolver.query_soa("ad.example.com", port=port, timeout=0.3), "noanswer")
 
 
 class ConfigTest(unittest.TestCase):

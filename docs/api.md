@@ -40,7 +40,7 @@ answers (everything else `401`). Useful for scripts and tests.
 
 ## Core protocol routes
 
-- `GET /core/health` → `200 {"ok": true, "version": "1.1.0", "state": "ready"}` as soon as the API serves
+- `GET /core/health` → `200 {"ok": true, "version": "1.1.1", "state": "ready"}` as soon as the API serves
   requests – also before setup (`state: "unconfigured"`) and while Samba is down (that shows up in
   `/api/status` and as event `ad.samba.down`).
 - `GET /core/manifest` → see below.
@@ -55,7 +55,7 @@ answers (everything else `401`). Useful for scripts and tests.
 {
   "id": "ad",
   "name": "PK95 AD",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "protocol": 1,
   "icon": "key",
   "menu": [
@@ -158,7 +158,7 @@ start Samba, wait until LDAP answers, send `ad.setup.done`.
 
 ```json
 {
-  "version": "1.1.0",
+  "version": "1.1.1",
   "core_mode": true,
   "state": "ready",
   "started_at": 1762700000000,
@@ -214,6 +214,10 @@ unexpected exit. `domain` is `null` before setup.
 FSMO values are the DC names (`hostname` of the owning server). With only one DC all are this DC.
 `dns_port` is stable (the Core module uses it for the conditional forwarding rule in PK95 DNS).
 `ntp`: same object as in `/api/status`.
+`resolver` (new in 1.1.1): whether the DC resolves through PK95 DNS (docs/design.md → DNS of the DC itself).
+`{"ok": true, "nameserver": "127.0.0.1", "message": ""}`; `ok: false` with a German `message` while nothing on
+`127.0.0.1:53` answers the realm (no PK95 DNS, or the conditional forwarding rule is missing) – Samba then logs
+failed DNS updates. Checked every 30 s.
 `idmap` (new in 1.0.1): Unix IDs Samba hands out; the unprivileged LXC only has the IDs 0–65535 (docs/design.md →
 Unix IDs).
 

@@ -7,7 +7,7 @@ import os
 import shutil
 import threading
 
-from . import VERSION, events, smbconf, validate
+from . import VERSION, events, resolver, smbconf, validate
 from .directory import Directory
 from .errors import NOT_READY, conflict, invalid
 from .monitor import DbCheck, Monitor
@@ -52,6 +52,7 @@ class App:
         self.samba = Process("samba", self._samba_argv, on_crash=self.monitor.samba_crashed, label="Samba")
         self.chrony = Process("chronyd", self._chrony_argv, label="chronyd", on_line=self._chrony_line)
         self.ntp_error = ""
+        self.resolver_status = {"ok": False, "nameserver": "", "message": "Noch nicht geprüft."}
         self.services = {"ldap": False, "kerberos": False, "smb": False, "dns": False}
         self._backup_timer: threading.Timer | None = None
         self._lock = threading.Lock()
@@ -158,6 +159,17 @@ class App:
         if self.cfg.ntp:
             self.ntp_error = ""
             self.chrony.start()  # failures only show in ntp_info(), Samba does not depend on it
+        self.check_resolver()
+
+    def check_resolver(self) -> None:
+        """Resolve through PK95 DNS once it forwards the realm (also from the monitor every 30 s)."""
+        if not self.cfg.manage_processes or self.state() != "ready" or not self.settings:
+            return
+        try:
+            self.resolver_status = resolver.ensure(self.settings["realm"])
+        except Exception as exc:  # noqa: BLE001 - informational, must not stop the start
+            log.warning("resolver check failed: %s", exc)
+            self.resolver_status = {"ok": False, "nameserver": "", "message": f"Prüfung fehlgeschlagen: {exc}"}
 
     def stop_services(self) -> None:
         self.chrony.stop(timeout=10)

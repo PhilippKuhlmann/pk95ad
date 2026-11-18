@@ -112,6 +112,7 @@ class Monitor:
             self._fail_since = None
             return
         services = app.probe()
+        app.check_resolver()
         healthy = app.samba.running() and services["ldap"] and services["kerberos"]
         now = time.monotonic()
         if healthy:
