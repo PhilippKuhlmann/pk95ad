@@ -128,6 +128,118 @@ class DecodeApplyTest(unittest.TestCase):
         self.assertEqual(changed, set())
 
 
+class Package1Test(unittest.TestCase):
+    """1.2.0: Grundschutz und Komfort (computer configuration)."""
+
+    def values(self, entries):
+        return {(e.key, e.value): regpol.entry_value(e) for e in entries}
+
+    def test_catalog_groups_and_bool_help(self):
+        groups = {c["group"] for c in gs.CATALOG}
+        self.assertTrue({"Sicherheit", "Remotedesktop", "Datenschutz", "Energie", "Microsoft Edge",
+                         "OneDrive"} <= groups)
+        for c in gs.CATALOG:
+            if c["type"] == "bool":
+                self.assertTrue(c["help"].startswith("Aktiviert:") and "Deaktiviert:" in c["help"], c["key"])
+        self.assertEqual(len({c["key"] for c in gs.CATALOG}), len(gs.CATALOG))
+
+    def test_firewall_all_profiles(self):
+        entries, _, settings, changed = gs.apply(*empty(), {"firewall_enabled": True}, REALM)
+        self.assertEqual(changed, {"computer"})
+        self.assertEqual(self.values(entries["computer"]), {
+            (gs.K_FW + r"\DomainProfile", "EnableFirewall"): 1, (gs.K_FW + r"\PrivateProfile", "EnableFirewall"): 1,
+            (gs.K_FW + r"\PublicProfile", "EnableFirewall"): 1})
+        self.assertIs(settings["firewall_enabled"], True)
+        entries, _, settings, _ = gs.apply(entries, {}, {"firewall_enabled": False}, REALM)
+        self.assertIs(settings["firewall_enabled"], False)
+        self.assertEqual(set(self.values(entries["computer"]).values()), {0})
+
+    def test_autorun_disabled_writes_del_like_the_gpmc(self):
+        entries, _, settings, _ = gs.apply(*empty(), {"autorun_off": True}, REALM)
+        v = self.values(entries["computer"])
+        self.assertEqual(v[(gs.K_EXPLORER_M, "NoDriveTypeAutoRun")], 255)
+        self.assertEqual(v[(gs.K_EXPLORER_M, "NoAutorun")], 1)
+        self.assertEqual(v[(gs.K_WINEXPLORER, "NoAutoplayfornonVolume")], 1)
+        entries, _, settings, _ = gs.apply(entries, {}, {"autorun_off": False}, REALM)
+        v = self.values(entries["computer"])
+        self.assertEqual(v, {(gs.K_EXPLORER_M, "**del.NoDriveTypeAutoRun"): " ", (gs.K_EXPLORER_M, "**del.NoAutorun"): " ",
+                             (gs.K_WINEXPLORER, "NoAutoplayfornonVolume"): 0})
+        self.assertIs(settings["autorun_off"], False)
+        entries, _, settings, _ = gs.apply(entries, {}, {"autorun_off": None}, REALM)
+        self.assertEqual(entries["computer"], [])
+        self.assertIsNone(settings["autorun_off"])
+
+    def test_rdp_opens_firewall_and_closing_removes_the_rules(self):
+        entries, _, settings, _ = gs.apply(*empty(), {"rdp_allow": True, "rdp_require_nla": True}, REALM)
+        v = self.values(entries["computer"])
+        self.assertEqual(v[(gs.K_TS, "fDenyTSConnections")], 0)
+        self.assertEqual(v[(gs.K_TS, "UserAuthentication")], 1)
+        rules = [x for (k, _), x in v.items() if k == gs.K_FW_RULES]
+        self.assertEqual(len(rules), 2)
+        self.assertTrue(all(r.startswith("v2.10|Action=Allow|Active=TRUE|Dir=In|") and "LPort=3389|" in r
+                            for r in rules))
+        self.assertTrue(settings["rdp_allow"])
+        entries, _, settings, _ = gs.apply(entries, {}, {"rdp_allow": False}, REALM)
+        v = self.values(entries["computer"])
+        self.assertEqual(v[(gs.K_TS, "fDenyTSConnections")], 1)
+        self.assertFalse(any(k == gs.K_FW_RULES for k, _ in v))
+        self.assertIs(settings["rdp_allow"], False)
+        self.assertTrue(settings["rdp_require_nla"])
+
+    def test_inverted_bools(self):
+        entries, _, settings, _ = gs.apply(*empty(), {"defender_realtime": True, "llmnr_off": True,
+                                                       "edge_password_manager_off": True, "onedrive_off": True}, REALM)
+        v = self.values(entries["computer"])
+        self.assertEqual(v[(gs.K_DEFENDER_RTP, "DisableRealtimeMonitoring")], 0)
+        self.assertEqual(v[(gs.K_DNSCLIENT, "EnableMulticast")], 0)
+        self.assertEqual(v[(gs.K_EDGE, "PasswordManagerEnabled")], 0)
+        self.assertEqual(v[(gs.K_ONEDRIVE, "DisableFileSyncNGSC")], 1)
+        for k in ("defender_realtime", "llmnr_off", "edge_password_manager_off", "onedrive_off"):
+            self.assertIs(settings[k], True)
+
+    def test_power_minutes_as_seconds(self):
+        entries, _, settings, _ = gs.apply(*empty(), {"display_off_ac_minutes": 10, "sleep_dc_minutes": 0}, REALM)
+        v = self.values(entries["computer"])
+        self.assertEqual(v[(f"{gs.K_POWER}\\{gs.POWER_DISPLAY}", "ACSettingIndex")], 600)
+        self.assertEqual(v[(f"{gs.K_POWER}\\{gs.POWER_SLEEP}", "DCSettingIndex")], 0)
+        self.assertEqual((settings["display_off_ac_minutes"], settings["sleep_dc_minutes"]), (10, 0))
+        with self.assertRaises(ApiError):
+            gs.apply(*empty(), {"sleep_ac_minutes": 601}, REALM)
+
+    def test_telemetry_enum(self):
+        entries, _, settings, _ = gs.apply(*empty(), {"telemetry_level": 1}, REALM)
+        self.assertEqual(self.values(entries["computer"]), {(gs.K_DATACOLL, "AllowTelemetry"): 1})
+        self.assertEqual(settings["telemetry_level"], 1)
+        with self.assertRaises(ApiError):
+            gs.apply(*empty(), {"telemetry_level": 2}, REALM)
+
+    def test_edge_start_pages_as_list_key(self):
+        body = {"edge_startup_urls": "https://intranet.example.com\n\nhttps://example.org/x ",
+                "edge_homepage": "https://intranet.example.com"}
+        entries, _, settings, _ = gs.apply(*empty(), body, REALM)
+        e = entries["computer"]
+        self.assertIn(regpol.delete_values(gs.K_EDGE_URLS), e)
+        v = self.values(e)
+        self.assertEqual(v[(gs.K_EDGE, "RestoreOnStartup")], 4)
+        self.assertEqual(v[(gs.K_EDGE_URLS, "1")], "https://intranet.example.com")
+        self.assertEqual(v[(gs.K_EDGE_URLS, "2")], "https://example.org/x")
+        self.assertEqual(v[(gs.K_EDGE, "HomepageIsNewTabPage")], 0)
+        self.assertEqual(settings["edge_startup_urls"], "https://intranet.example.com\nhttps://example.org/x")
+        # Shorter list: old numbered values go away.
+        entries, _, settings, _ = gs.apply(entries, {}, {"edge_startup_urls": "https://a.example"}, REALM)
+        self.assertNotIn((gs.K_EDGE_URLS, "2"), self.values(entries["computer"]))
+        self.assertEqual(gs.unmanaged_count(entries), {"computer": 0, "user": 0})
+        for bad in ({"edge_startup_urls": "ftp://x"}, {"edge_homepage": "intranet"},
+                    {"edge_startup_urls": "\n".join(f"https://h{i}.example" for i in range(21))}):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ApiError):
+                    gs.apply(*empty(), bad, REALM)
+
+    def test_gpmc_disabled_entries_count_as_managed(self):
+        e = [regpol.delete_value(gs.K_EXPLORER_M, "NoAutorun")]
+        self.assertEqual(gs.unmanaged_count({"computer": e, "user": []}), {"computer": 0, "user": 0})
+
+
 class ScriptsIniTest(unittest.TestCase):
     def test_roundtrip_utf16_with_bom(self):
         ini = gs.ScriptsIni()

@@ -40,7 +40,7 @@ answers (everything else `401`). Useful for scripts and tests.
 
 ## Core protocol routes
 
-- `GET /core/health` → `200 {"ok": true, "version": "1.1.2", "state": "ready"}` as soon as the API serves
+- `GET /core/health` → `200 {"ok": true, "version": "1.2.0", "state": "ready"}` as soon as the API serves
   requests – also before setup (`state: "unconfigured"`) and while Samba is down (that shows up in
   `/api/status` and as event `ad.samba.down`).
 - `GET /core/manifest` → see below.
@@ -55,7 +55,7 @@ answers (everything else `401`). Useful for scripts and tests.
 {
   "id": "ad",
   "name": "PK95 AD",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "protocol": 1,
   "icon": "key",
   "menu": [
@@ -158,7 +158,7 @@ start Samba, wait until LDAP answers, send `ad.setup.done`.
 
 ```json
 {
-  "version": "1.1.2",
+  "version": "1.2.0",
   "core_mode": true,
   "state": "ready",
   "started_at": 1762700000000,
@@ -565,6 +565,32 @@ answers `settings` with every catalog key, `null` when not configured.
 | `logon_banner_title` | computer | string (max 200) | same key: `LegalNoticeCaption` (REG_SZ) |
 | `logon_banner_text` | computer | text (max 2000) | same key: `LegalNoticeText` (REG_SZ) |
 | `startup_scripts` | computer | scripts (max 20) | `Machine\Scripts\scripts.ini` `[Startup]` |
+
+New in 1.2.0 (all `computer`, `HKLM\Software\Policies\…` unless noted; catalog groups Sicherheit, Remotedesktop,
+Datenschutz, Energie, Microsoft Edge, OneDrive; the help texts name edition limits):
+
+| key | type | written as (true / false) |
+|---|---|---|
+| `firewall_enabled` | bool | `Microsoft\WindowsFirewall\{Domain,Private,Public}Profile` `EnableFirewall` 1 / 0 |
+| `defender_realtime` | bool | `Microsoft\Windows Defender\Real-Time Protection` `DisableRealtimeMonitoring` 0 / 1 |
+| `defender_pua` | bool | `Microsoft\Windows Defender` `PUAProtection` 1 / 0 |
+| `autorun_off` | bool | `HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer` `NoDriveTypeAutoRun`=255, `NoAutorun`=1 and `Microsoft\Windows\Explorer` `NoAutoplayfornonVolume`=1 / `**del.NoDriveTypeAutoRun`, `**del.NoAutorun`, `NoAutoplayfornonVolume`=0 |
+| `llmnr_off` | bool | `Microsoft\Windows NT\DNSClient` `EnableMulticast` 0 / 1 |
+| `netbios_off` | bool | same key `EnableNetbios` 0 / 1 (Windows 11 22H2 and newer) |
+| `rdp_allow` | bool | `Microsoft\Windows NT\Terminal Services` `fDenyTSConnections` 0 plus two firewall rules in `Microsoft\WindowsFirewall\FirewallRules` (`PK95AD-RDP-TCP-In`, `PK95AD-RDP-UDP-In`: allow inbound 3389) / `fDenyTSConnections` 1, rules removed |
+| `rdp_require_nla` | bool | same key `UserAuthentication` 1 / 0 |
+| `consumer_features_off` | bool | `Microsoft\Windows\CloudContent` `DisableWindowsConsumerFeatures` 1 / 0 |
+| `telemetry_level` | enum `0`, `1`, `3` | `Microsoft\Windows\DataCollection` `AllowTelemetry` |
+| `store_off` | bool | `Microsoft\WindowsStore` `RemoveWindowsStore` 1 / 0 |
+| `display_off_ac_minutes`, `display_off_dc_minutes` | int 0–600 (0 = never) | `Microsoft\Power\PowerSettings\3C0BC021-C8A8-4E07-A973-6B14CBCB2B7E` `ACSettingIndex` / `DCSettingIndex` (seconds) |
+| `sleep_ac_minutes`, `sleep_dc_minutes` | int 0–600 | `…\PowerSettings\29F6C1DB-86DA-48C5-9FDB-F2B67B1F44DA` `ACSettingIndex` / `DCSettingIndex` (seconds) |
+| `edge_startup_urls` | text, one `http(s)://` URL per line, max 20 | `Microsoft\Edge` `RestoreOnStartup`=4, `Microsoft\Edge\RestoreOnStartupURLs`: `**delvals.`, then `1`, `2`, … |
+| `edge_homepage` | string (URL) | `Microsoft\Edge` `HomepageLocation`, `HomepageIsNewTabPage`=0 |
+| `edge_password_manager_off` | bool | `Microsoft\Edge` `PasswordManagerEnabled` 0 / 1 |
+| `onedrive_off` | bool | `Microsoft\Windows\OneDrive` `DisableFileSyncNGSC` 1 / 0 |
+
+Entries the GPMC wrote for these values (also its `**del.` forms) are recognised; nothing else in `Registry.pol`
+changes.
 
 Script `path`: UNC path (`\\ad.example.com\NETLOGON\logon.bat`) or a file name in NETLOGON (then
 written as the UNC path), `parameters` 0–260 chars.
