@@ -37,10 +37,16 @@ jobs:
           echo "TOKEN=$TOKEN" >> "$GITHUB_ENV"
       - name: Docker with userns-remap (IDs 0-65535 only, like the LXC)
         run: |
-          sudo touch /etc/docker/daemon.json
-          sudo sh -c 'jq ". + {\"userns-remap\": \"default\"}" /etc/docker/daemon.json 2>/dev/null \
-            || echo "{\"userns-remap\": \"default\"}"' > /tmp/daemon.json
-          sudo mv /tmp/daemon.json /etc/docker/daemon.json
+          sudo python3 - <<'EOF'
+          import json
+          path = "/etc/docker/daemon.json"
+          try:
+              conf = json.load(open(path))
+          except (OSError, ValueError):
+              conf = {}
+          conf["userns-remap"] = "default"
+          json.dump(conf, open(path, "w"), indent=2)
+          EOF
           cat /etc/docker/daemon.json
           sudo systemctl restart docker
           docker info --format '{{json .SecurityOptions}}'
