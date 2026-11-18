@@ -40,7 +40,7 @@ answers (everything else `401`). Useful for scripts and tests.
 
 ## Core protocol routes
 
-- `GET /core/health` → `200 {"ok": true, "version": "1.0.1", "state": "ready"}` as soon as the API serves
+- `GET /core/health` → `200 {"ok": true, "version": "1.1.0", "state": "ready"}` as soon as the API serves
   requests – also before setup (`state: "unconfigured"`) and while Samba is down (that shows up in
   `/api/status` and as event `ad.samba.down`).
 - `GET /core/manifest` → see below.
@@ -55,7 +55,7 @@ answers (everything else `401`). Useful for scripts and tests.
 {
   "id": "ad",
   "name": "PK95 AD",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "protocol": 1,
   "icon": "key",
   "menu": [
@@ -158,7 +158,7 @@ start Samba, wait until LDAP answers, send `ad.setup.done`.
 
 ```json
 {
-  "version": "1.0.1",
+  "version": "1.1.0",
   "core_mode": true,
   "state": "ready",
   "started_at": 1762700000000,
@@ -575,6 +575,60 @@ or removed when the half has no such settings left. Other extensions stay.
 
 `other_settings`: `{"computer": 2, "user": 0, "extensions": ["Sicherheit", "Software-Installation"]}` – entries
 and client-side extensions that only the Windows tools can edit.
+
+### Drive maps (new in 1.1.0)
+
+Network drives through Group Policy Preferences (user configuration → Preferences → Drive Maps), the same file the
+Windows GPMC writes: `User\Preferences\Drives\Drives.xml` in the GPO's SYSVOL folder. The shares themselves live
+on a file server or NAS.
+
+| Route | Body | Answer |
+|---|---|---|
+| `GET /api/gpos/{id}/drives` | – | `200 {"items": [drive…]}` in file order (the order Windows processes them) |
+| `PUT /api/gpos/{id}/drives` | `{"items": [drive…]}` | `200 {"items": [drive…], "version": {"computer", "user"}}` – replaces the whole list |
+
+The GPO object (`GET /api/gpos`, `GET /api/gpos/{id}`) gets `drive_count` (number of drive items).
+
+Drive item:
+
+```json
+{
+  "uid": "{6F1A2C3D-4B5E-4F60-8A9B-0C1D2E3F4A5B}",
+  "letter": "V",
+  "first_available": false,
+  "path": "\\\\nas.example.com\\vertrieb",
+  "label": "Vertrieb",
+  "action": "update",
+  "reconnect": true,
+  "visibility": "unchanged",
+  "target": { "group_id": "…", "group_name": "Verkauf", "not": false },
+  "changed_at": 1762900000000,
+  "readonly": false,
+  "warning": ""
+}
+```
+
+| field | rule |
+|---|---|
+| `uid` | GUID of the item (braced, uppercase). Omit for new items; send it back unchanged for existing ones, so the item keeps its identity. Unknown uids are treated as new. |
+| `letter` | `A`–`Z`. With `first_available: true` it is the letter Windows starts searching from ("erster freier ab …"). Letters with `first_available: false` must be unique within the GPO (`422 items.N.letter`). |
+| `first_available` | default `false` |
+| `path` | UNC path `\\server\share[\folder…]`, max 260 chars |
+| `label` | 0–128 chars, shown in Explorer; default `""` |
+| `action` | `create`, `replace`, `update` (default), `delete` – like the GPMC: create maps only when missing, replace disconnects and maps again, update maps or changes an existing mapping, delete removes the mapping |
+| `reconnect` | default `true` (mapping stays after logoff/restart, `persistent`) |
+| `visibility` | `unchanged` (default), `hide`, `show` – hide or show this drive in Explorer |
+| `target` | `null` = all users the GPO applies to. Otherwise item-level targeting on a security group: `group_id` (must exist, `422 items.N.target.group_id`), `not: true` = users who are **not** members. `group_name` is read-only. |
+| `changed_at` | read-only; set when the item changes |
+| `readonly`, `warning` | read-only. Items written by the GPMC with features PK95 AD does not edit (stored password, other or several targeting filters, …) come back with `readonly: true` and a German `warning`. Sending such an item back (same `uid`) keeps it unchanged whatever the other fields say; leaving it out deletes it. |
+
+At most 50 items. Stored passwords (`cpassword`) are never written (insecure since MS14-025); items that carry one
+show `warning: "Enthält ein gespeichertes Kennwort (unsicher, MS14-025). Bitte in der GPMC entfernen."`.
+
+When the list changes, the user half of the version goes up (`GPT.INI` and `versionNumber`) and
+`gPCUserExtensionNames` gets `[{5794DAFD-BE60-433F-88A2-1A31939AC01F}{2EA1A81B-48E5-45E9-8BB7-A6E3AC170006}]`
+(removed again when the list becomes empty; the file is deleted then). Drive maps are no longer counted in
+`other_settings.extensions`.
 
 ### Inheritance
 
