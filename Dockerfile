@@ -16,11 +16,17 @@ RUN apt-get update \
 	# The image ships no domain: provisioning creates everything in the volumes.
 	&& rm -f /etc/samba/smb.conf /etc/krb5.conf \
 	&& rm -rf /var/lib/samba/* /var/cache/samba/* \
+	# Unprivileged LXC: only the IDs 0-65535 exist. Samba's automatic Unix IDs start at 3000000 by default,
+	# and a chown to such an ID makes provisioning panic. Use 20000-59999 instead (docs/design.md → Unix IDs).
+	&& sed -i -E -e 's/^lowerBound: [0-9]+$/lowerBound: 20000/' -e 's/^upperBound: [0-9]+$/upperBound: 59999/' \
+		/usr/share/samba/setup/idmap_init.ldif \
+	&& grep -qx 'lowerBound: 20000' /usr/share/samba/setup/idmap_init.ldif \
+	&& grep -qx 'upperBound: 59999' /usr/share/samba/setup/idmap_init.ldif \
 	&& mkdir -p /var/lib/pk95ad /etc/chrony /run/chrony
 
 COPY pk95ad /opt/pk95ad/pk95ad
 
-ARG VERSION=1.0.0
+ARG VERSION=1.0.1
 ENV PYTHONPATH=/opt/pk95ad \
 	PYTHONUNBUFFERED=1 \
 	PYTHONDONTWRITEBYTECODE=1 \

@@ -14,7 +14,7 @@ import threading
 import time
 import traceback
 
-from . import events, validate
+from . import events, idmap, validate
 from .errors import ApiError, Fields, conflict
 from .store import load_json, now_ms, save_json
 from .supervisor import tcp_open
@@ -216,7 +216,12 @@ class Setup:
         try:
             self.say("Prüfe das Dateisystem …")
             check_filesystem(cfg.samba_dir, self.say)
-            self.say("Entferne Reste früherer Versuche …")
+            if cfg.manage_processes:
+                err = idmap.check_ldif()
+                if err:
+                    raise SetupError(err)
+                self.say(f"Unix-IDs für Samba: {idmap.XID_LOW}–{idmap.XID_HIGH} (LXC: nur bis {idmap.MAX_ID}).")
+            self.say("Entferne Reste früherer Versuche (Datenbanken inkl. idmap.ldb, SYSVOL, smb.conf) …")
             app.stop_services()
             app.directory.close()
             wipe(cfg)
@@ -263,6 +268,11 @@ class Setup:
                 self.say("Warnung: samba-tool ntacl get kann die NT-ACL von SYSVOL nicht lesen.")
             else:
                 self.say("NT-ACL von SYSVOL liegt in user.NTACL und ist lesbar.")
+            lower, upper, hwm, xids = idmap.read(cfg)
+            ev = idmap.evaluate(lower or 0, upper or 0, hwm, xids, [])
+            if not ev["ok"]:
+                raise SetupError(ev["message"])
+            self.say(f"Unix-IDs: {lower}–{upper}, bisher {len(xids)} vergeben (höchste {max(xids, default=0)}).")
 
             with self._lock:
                 self.state = "ready"

@@ -23,8 +23,9 @@ jobs:
       - run: python -m pyflakes pk95ad tests
       - run: python -m unittest discover -s tests -t . -v
 
-  # Provisions a real domain in the image (plain Docker: no CAP_SYS_ADMIN, so security.* xattrs fail
-  # like in an unprivileged LXC) and runs every API area against it.
+  # Provisions a real domain in the image and runs every API area against it, under the same limits as
+  # the unprivileged Proxmox LXC: no CAP_SYS_ADMIN (security.* xattrs fail) and a user namespace with
+  # only 65536 IDs (userns-remap, like the LXC's "0 100000 65536"), so a chown to an ID >= 65536 fails.
   integration:
     needs: test
     runs-on: ubuntu-latest
@@ -34,15 +35,30 @@ jobs:
           TOKEN=$(openssl rand -hex 24)
           echo "::add-mask::$TOKEN"
           echo "TOKEN=$TOKEN" >> "$GITHUB_ENV"
+      - name: Docker with userns-remap (IDs 0-65535 only, like the LXC)
+        run: |
+          sudo python3 - <<'EOF'
+          import json
+          path = "/etc/docker/daemon.json"
+          try:
+              conf = json.load(open(path))
+          except (OSError, ValueError):
+              conf = {}
+          conf["userns-remap"] = "default"
+          json.dump(conf, open(path, "w"), indent=2)
+          EOF
+          cat /etc/docker/daemon.json
+          sudo systemctl restart docker
+          docker info --format '{{json .SecurityOptions}}'
+          grep dockremap /etc/subuid /etc/subgid
       - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          load: true
-          tags: pk95-ad:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      # Plain docker build: a BuildKit container builder would need --privileged, which userns-remap forbids.
+      - name: Build image
+        run: docker build -t pk95-ad:ci .
+      - name: Check the user namespace limit
+        run: |
+          docker run --rm --entrypoint sh pk95-ad:ci -c \
+            'cat /proc/self/uid_map; touch /tmp/x; chown 60000 /tmp/x && ! chown 3000000 /tmp/x 2>/dev/null'
       - name: Start container
         run: |
           docker run -d --name pk95ad -p 8389:8389 \
@@ -88,7 +104,7 @@ jobs:
           # Debian packages for both architectures (Raspberry Pi, ARM VPS); the app is plain Python.
           platforms: linux/amd64,linux/arm64
           push: true
-          build-args: VERSION=${{ startsWith(github.ref, 'refs/tags/v') && steps.meta.outputs.version || '1.0.0' }}
+          build-args: VERSION=${{ startsWith(github.ref, 'refs/tags/v') && steps.meta.outputs.version || '1.0.1' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

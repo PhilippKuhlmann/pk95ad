@@ -40,7 +40,7 @@ answers (everything else `401`). Useful for scripts and tests.
 
 ## Core protocol routes
 
-- `GET /core/health` → `200 {"ok": true, "version": "1.0.0", "state": "ready"}` as soon as the API serves
+- `GET /core/health` → `200 {"ok": true, "version": "1.0.1", "state": "ready"}` as soon as the API serves
   requests – also before setup (`state: "unconfigured"`) and while Samba is down (that shows up in
   `/api/status` and as event `ad.samba.down`).
 - `GET /core/manifest` → see below.
@@ -55,7 +55,7 @@ answers (everything else `401`). Useful for scripts and tests.
 {
   "id": "ad",
   "name": "PK95 AD",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "protocol": 1,
   "icon": "key",
   "menu": [
@@ -146,7 +146,8 @@ provisioning is removed first).
 | `dns_forwarder` | IPv4 or IPv6 address (optionally `:port` / `[v6]:port`) where Samba's DNS sends names outside the AD zones. Default `127.0.0.1` (PK95 DNS on the same LXC). |
 | `admin_password` | password of `Administrator`: 8–127 chars and at least 3 of: uppercase, lowercase, digit, other character (Samba's default complexity), must not contain `Administrator`. Not stored by PK95 AD. |
 
-Steps (each one appears in `log`): write a minimal `smb.conf` with the PK95 options (see `docs/design.md`),
+Steps (each one appears in `log`): check the file system and the Unix ID range of the image (20000–59999),
+remove everything a failed attempt left (including `idmap.ldb`), write a minimal `smb.conf` with the PK95 options (see `docs/design.md`),
 `samba-tool domain provision --use-rfc2307 --dns-backend=SAMBA_INTERNAL …`, write the final `smb.conf`,
 copy `krb5.conf`, `samba-tool ntacl sysvolreset`, check that `user.NTACL` is set and readable (`samba-tool ntacl get`),
 start Samba, wait until LDAP answers, send `ad.setup.done`.
@@ -157,7 +158,7 @@ start Samba, wait until LDAP answers, send `ad.setup.done`.
 
 ```json
 {
-  "version": "1.0.0",
+  "version": "1.0.1",
   "core_mode": true,
   "state": "ready",
   "started_at": 1762700000000,
@@ -213,6 +214,17 @@ unexpected exit. `domain` is `null` before setup.
 FSMO values are the DC names (`hostname` of the owning server). With only one DC all are this DC.
 `dns_port` is stable (the Core module uses it for the conditional forwarding rule in PK95 DNS).
 `ntp`: same object as in `/api/status`.
+`idmap` (new in 1.0.1): Unix IDs Samba hands out; the unprivileged LXC only has the IDs 0–65535 (docs/design.md →
+Unix IDs).
+
+```json
+"idmap": { "xid_range": [20000, 59999], "rfc2307_range": [10000, 19999], "next_xid": 20123, "allocated": 42,
+           "ok": true, "message": "" }
+```
+
+`ok: false` with a German `message` when the domain uses another range (provisioned with 1.0.0 outside the
+LXC: set it up again), an ID above 65535 was handed out, a `uidNumber`/`gidNumber` lies outside `rfc2307_range`, or
+fewer than 10 % of the range are left.
 
 ### `PUT /api/domain/settings`
 

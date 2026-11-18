@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 
-from pk95ad import config, gpo, monitor, smbconf, sysvol
+from pk95ad import config, gpo, idmap, monitor, smbconf, sysvol
 from pk95ad.directory import gentime_ms, ms_to_nt, nt_to_ms, password_message
 from pk95ad.errors import ApiError
 
@@ -32,6 +32,41 @@ class SmbConfTest(unittest.TestCase):
         self.assertEqual(moved.count("# pk95ad"), 1)
         self.assertIn("192.0.2.11\tdc1.ad.example.com", moved)
         self.assertEqual(smbconf.hosts_with_dc(out, SETTINGS), out)
+
+
+class IdmapTest(unittest.TestCase):
+    SAMBA_DEFAULT = "dn: CN=CONFIG\ncn: CONFIG\nlowerBound: 3000000\nupperBound: 4000000\n"
+
+    def test_ldif(self):
+        self.assertEqual(idmap.ldif_bounds(self.SAMBA_DEFAULT), (3000000, 4000000))
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "idmap_init.ldif")
+            with open(p, "w") as fh:
+                fh.write(self.SAMBA_DEFAULT)
+            self.assertIn("65535", idmap.check_ldif(p))
+            with open(p, "w") as fh:
+                fh.write(self.SAMBA_DEFAULT.replace("3000000", "20000").replace("4000000", "59999"))
+            self.assertIsNone(idmap.check_ldif(p))
+            self.assertIn("fehlt", idmap.check_ldif(os.path.join(d, "missing.ldif")))
+
+    def test_ranges_do_not_overlap_and_fit_the_lxc(self):
+        self.assertLess(idmap.RFC2307_HIGH, idmap.XID_LOW)
+        self.assertLess(idmap.XID_HIGH, 65534)  # nobody
+        self.assertLessEqual(idmap.MAX_ID, 65535)
+
+    def test_evaluate(self):
+        ok = idmap.evaluate(20000, 59999, 20042, [0, 100, 65534, 20000, 20041], [("max", 10000)])
+        self.assertTrue(ok["ok"], ok["message"])
+        self.assertEqual((ok["next_xid"], ok["allocated"]), (20042, 5))
+        old = idmap.evaluate(3000000, 4000000, 3000010, [3000001], [])
+        self.assertFalse(old["ok"])
+        self.assertIn("neu eingerichtet", old["message"])
+        bad_rfc = idmap.evaluate(20000, 59999, None, [], [("anna", 70000)])
+        self.assertFalse(bad_rfc["ok"])
+        self.assertIn("anna", bad_rfc["message"])
+        self.assertEqual(bad_rfc["next_xid"], 20000)
+        full = idmap.evaluate(20000, 59999, 58000, [], [])
+        self.assertIn("fast aufgebraucht", full["message"])
 
 
 class ConfigTest(unittest.TestCase):

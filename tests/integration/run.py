@@ -141,6 +141,7 @@ def main():
     check(d["realm"] == REALM and d["netbios_domain"] == "PK95TEST", "realm/netbios")
     check(d["fsmo"]["pdc"] == "dc1" and d["dns_port"] == 5300, f"fsmo {d['fsmo']}")
     check(d["domain_level"] == "2008_R2", "domain level")
+    check(d["idmap"]["ok"] and d["idmap"]["xid_range"] == [20000, 59999], f"idmap {d['idmap']}")
     _, pp = call("PUT", "/api/domain/password-policy", {"min_length": 10, "lockout_threshold": 3,
                                                           "lockout_duration_minutes": 15,
                                                           "lockout_window_minutes": 15}, expect=200)
@@ -281,6 +282,19 @@ def main():
     # sysvolcheck reads security.NTACL directly and cannot work here; ntacl get uses the VFS (docs/design.md).
     dexec("samba-tool", "ntacl", "get", "--as-sddl", f"/var/lib/samba/sysvol/{REALM}/Policies")
     dexec("smbclient", "//127.0.0.1/netlogon", "-U", f"PK95TEST\\Administrator%{PASSWORD}", "-c", "ls")
+
+    print("== Unix IDs stay below 65536 (unprivileged LXC)")
+    # A normal user without uidNumber accessing files: smbd maps the SID to a new Unix ID.
+    call("PUT", f"/api/users/{u['id']}", {"enabled": True}, expect=200)
+    dexec("smbclient", "//127.0.0.1/netlogon", "-U", f"PK95TEST\\max%{USER_PW_2}", "-c", "ls")
+    _, out = dexec("ldbsearch", "-H", "/var/lib/samba/private/idmap.ldb", "(xidNumber=*)", "xidNumber")
+    xids = [int(line.split(":")[1]) for line in out.splitlines() if line.startswith("xidNumber:")]
+    check(xids and max(xids) <= 65535, f"{len(xids)} idmap entries, highest {max(xids, default=0)}")
+    check(any(20000 <= x <= 59999 for x in xids), "automatic IDs from 20000-59999")
+    _, out = dexec("sh", "-c", "find /var/lib/samba /var/lib/pk95ad -printf '%U\\n%G\\n' | sort -nu | tail -1")
+    check(int(out.split()[-1]) <= 65535, f"highest file owner/group {out.split()[-1]}")
+    _, d = call("GET", "/api/domain", expect=200)
+    check(d["idmap"]["ok"], f"idmap after file access {d['idmap']}")
 
     print("== cleanup and move")
     _, other = call("POST", "/api/ous", {"name": "Andere"}, expect=201)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from . import VERSION, accounts, directory, dnszone, gpo, gpsettings, sysvol
+from . import VERSION, accounts, directory, dnszone, gpo, gpsettings, idmap, sysvol
 from .app import App, manifest
 from .errors import invalid
 from .httpapi import Response, Router
@@ -47,7 +47,12 @@ def build(app: App) -> Router:
 
     # Domain
     def domain_info(s):
-        return {**directory.domain_info(s), "ntp": app.ntp_info()}
+        try:
+            ids = idmap.info(app.cfg, s)
+        except Exception as exc:  # noqa: BLE001 - informational, must not break the domain page
+            ids = {"xid_range": [0, 0], "rfc2307_range": [idmap.RFC2307_LOW, idmap.RFC2307_HIGH], "next_xid": 0,
+                   "allocated": 0, "ok": False, "message": f"idmap.ldb nicht lesbar: {exc}"}
+        return {**directory.domain_info(s), "ntp": app.ntp_info(), "idmap": ids}
     r.add("GET", "/api/domain", ready(lambda req, s: domain_info(s)))
 
     def domain_settings(req):
