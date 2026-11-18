@@ -51,6 +51,17 @@ def dword(key: str, value: str, number: int) -> Entry:
     return Entry(key, value, REG_DWORD, struct.pack("<I", number & 0xFFFFFFFF))
 
 
+def delete_value(key: str, value: str) -> Entry:
+    """'**del.<value>': the client deletes the value (what the GPMC writes for a disabled policy without a
+    disabled value)."""
+    return sz(key, "**del." + value, " ")
+
+
+def delete_values(key: str) -> Entry:
+    """'**delvals.': the client clears all values of the key first (written before list policies)."""
+    return sz(key, "**delvals.", " ")
+
+
 def entry_value(e: Entry):
     """Python value of an entry: str for REG_SZ/REG_EXPAND_SZ, int for DWORD/QWORD, else bytes."""
     if e.type in (REG_SZ, REG_EXPAND_SZ):

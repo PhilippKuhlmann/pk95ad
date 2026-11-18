@@ -244,6 +244,27 @@ def main():
     check(gp["version"] == {"computer": 1, "user": 1} and gp["sysvol_ok"], f"version bump {gp['version']}")
     _, gp = call("PUT", f"/api/gpos/{gp['id']}/settings", {"settings": {"screen_lock_minutes": 15}}, expect=200)
     check(gp["version"] == {"computer": 1, "user": 2}, f"only user half bumped {gp['version']}")
+    # Paket 1 (1.2.0): computer settings in Machine\Registry.pol
+    pkg1 = {"firewall_enabled": True, "defender_pua": True, "autorun_off": False, "llmnr_off": True,
+            "rdp_allow": True, "rdp_require_nla": True, "telemetry_level": 1, "display_off_ac_minutes": 15,
+            "edge_startup_urls": "https://intranet.example.com\nhttps://example.org", "onedrive_off": True}
+    _, gp = call("PUT", f"/api/gpos/{gp['id']}/settings", {"settings": pkg1}, expect=200)
+    check(all(gp["settings"][k] == v for k, v in pkg1.items()),
+          "package 1 settings read back")
+    check(gp["version"] == {"computer": 2, "user": 2}, f"only computer half bumped {gp['version']}")
+    _, pol = dexec("python3", "-c", (
+        "import glob; from pk95ad import regpol\n"
+        f"p = [x for x in glob.glob('/var/lib/samba/sysvol/{REALM}/Policies/{gp['guid']}/*/Registry.pol') "
+        "if '/Machine/' in x or '/MACHINE/' in x][0]\n"
+        "for e in regpol.parse(open(p, 'rb').read()): print(e.key + '!' + e.value + '=' + repr(regpol.entry_value(e)))"))
+    for line in (r"WindowsFirewall\PublicProfile!EnableFirewall=1", r"Terminal Services!fDenyTSConnections=0",
+                 "FirewallRules!PK95AD-RDP-TCP-In=", r"Explorer!**del.NoAutorun=", "DataCollection!AllowTelemetry=1",
+                 "ACSettingIndex=900", "RestoreOnStartupURLs!2='https://example.org'"):
+        check(line in pol, f"Registry.pol has {line}")
+    _, out = dexec("ldbsearch", "-H", "/var/lib/samba/private/sam.ldb", f"(name={gp['guid']})",
+                   "gPCMachineExtensionNames")
+    check("{35378EAC-683F-11D2-A89A-00C04FBBCFA2}{D02B1F72-3407-48AE-BA88-E8213C6761F1}"
+          in out.replace("\n ", "").upper(), "registry CSE in gPCMachineExtensionNames")
     call("POST", f"/api/gpos/{gp['id']}/links", {"target_id": vertrieb["id"], "enforced": True}, expect=201)
     call("POST", f"/api/gpos/{gp['id']}/links", {"target_id": users_container["id"]}, expect=422)
     call("PUT", f"/api/ous/{vertrieb['id']}", {"block_inheritance": True}, expect=200)

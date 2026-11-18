@@ -19,6 +19,27 @@ K_EXPLORER = r"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer"
 K_WINSYSTEM = r"Software\Policies\Microsoft\Windows\System"
 K_REMOVABLE = r"Software\Policies\Microsoft\Windows\RemovableStorageDevices"
 K_AU = r"Software\Policies\Microsoft\Windows\WindowsUpdate\AU"
+# Paket 1 (1.2.0), all machine (HKLM) policies
+K_FW = r"Software\Policies\Microsoft\WindowsFirewall"
+K_FW_RULES = K_FW + r"\FirewallRules"
+K_DEFENDER = r"Software\Policies\Microsoft\Windows Defender"
+K_DEFENDER_RTP = K_DEFENDER + r"\Real-Time Protection"
+K_EXPLORER_M = r"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+K_WINEXPLORER = r"Software\Policies\Microsoft\Windows\Explorer"
+K_DNSCLIENT = r"Software\Policies\Microsoft\Windows NT\DNSClient"
+K_TS = r"Software\Policies\Microsoft\Windows NT\Terminal Services"
+K_CLOUD = r"Software\Policies\Microsoft\Windows\CloudContent"
+K_DATACOLL = r"Software\Policies\Microsoft\Windows\DataCollection"
+K_STORE = r"Software\Policies\Microsoft\WindowsStore"
+K_POWER = r"Software\Policies\Microsoft\Power\PowerSettings"
+POWER_DISPLAY = "3C0BC021-C8A8-4E07-A973-6B14CBCB2B7E"  # Turn off the display
+POWER_SLEEP = "29F6C1DB-86DA-48C5-9FDB-F2B67B1F44DA"    # System sleep timeout
+K_EDGE = r"Software\Policies\Microsoft\Edge"
+K_EDGE_URLS = K_EDGE + r"\RestoreOnStartupURLs"
+K_ONEDRIVE = r"Software\Policies\Microsoft\Windows\OneDrive"
+TELEMETRY = [0, 1, 3]
+MAX_EDGE_URLS = 20
+_URL = re.compile(r"^https?://[^\s/$.?#][^\s]{0,1990}$", re.I)
 
 # WallpaperStyle of the "Desktop Wallpaper" administrative template.
 WALLPAPER_STYLES = {"center": "0", "tile": "1", "stretch": "2", "fit": "3", "fill": "4", "span": "5"}
@@ -86,6 +107,80 @@ CATALOG: list[dict] = [
      "label": "Hinweis vor der Anmeldung: Text", "type": "text", "max": 2000, "help": ""},
     {"key": "startup_scripts", "scope": "computer", "group": "Skripte",
      "label": "Startskripte", "type": "scripts", "max": MAX_SCRIPTS, "help": ""},
+    # Paket 1 (1.2.0): all computer configuration
+    {"key": "firewall_enabled", "scope": "computer", "group": "Sicherheit",
+     "label": "Windows-Firewall einschalten (alle Profile)", "type": "bool",
+     "help": "Aktiviert: Die Firewall ist im Domänen-, privaten und öffentlichen Profil an und lässt sich lokal "
+             "nicht abschalten. Deaktiviert: Die Firewall ist in allen Profilen aus (nicht empfohlen)."},
+    {"key": "defender_realtime", "scope": "computer", "group": "Sicherheit",
+     "label": "Microsoft Defender: Echtzeitschutz erzwingen", "type": "bool",
+     "help": "Aktiviert: Der Echtzeitschutz ist immer an. Deaktiviert: Der Echtzeitschutz wird abgeschaltet "
+             "(nicht empfohlen). Wirkt nur, wenn Microsoft Defender der aktive Virenschutz ist; bei eingeschaltetem "
+             "Manipulationsschutz ignoriert Windows das Abschalten."},
+    {"key": "defender_pua", "scope": "computer", "group": "Sicherheit",
+     "label": "Microsoft Defender: potenziell unerwünschte Apps blockieren", "type": "bool",
+     "help": "Aktiviert: Adware, Bundler und ähnliche Programme werden blockiert. Deaktiviert: kein PUA-Schutz. "
+             "Nur mit Microsoft Defender als Virenschutz."},
+    {"key": "autorun_off", "scope": "computer", "group": "Sicherheit",
+     "label": "AutoRun und automatische Wiedergabe abschalten", "type": "bool",
+     "help": "Aktiviert: Kein AutoRun und keine automatische Wiedergabe für alle Laufwerke und Geräte (USB-Sticks, "
+             "DVDs, Kameras). Deaktiviert: Windows-Standardverhalten."},
+    {"key": "llmnr_off", "scope": "computer", "group": "Sicherheit",
+     "label": "Multicast-Namensauflösung (LLMNR) abschalten", "type": "bool",
+     "help": "Aktiviert: kein LLMNR, das schützt vor dem Abgreifen von Anmeldedaten per Namens-Spoofing. "
+             "Deaktiviert: LLMNR bleibt an. Namen löst dann nur noch DNS auf."},
+    {"key": "netbios_off", "scope": "computer", "group": "Sicherheit",
+     "label": "NetBIOS-Namensauflösung abschalten", "type": "bool",
+     "help": "Aktiviert: keine NetBIOS-Namensauflösung. Deaktiviert: erlaubt. Wirkt erst ab Windows 11 22H2; "
+             "ältere Windows-Versionen ignorieren die Einstellung."},
+    {"key": "rdp_allow", "editions": ["pro", "enterprise", "education"], "scope": "computer", "group": "Remotedesktop",
+     "label": "Remotedesktop-Verbindungen erlauben", "type": "bool",
+     "help": "Aktiviert: Remotedesktop ist an, und die Windows-Firewall lässt TCP/UDP 3389 eingehend zu. Wer sich "
+             "anmelden darf, regelt die lokale Gruppe Remotedesktopbenutzer. Deaktiviert: Remotedesktop ist gesperrt. "
+             "Nur Windows Pro, Enterprise und Education; Home kann keine Verbindungen annehmen."},
+    {"key": "rdp_require_nla", "editions": ["pro", "enterprise", "education"], "scope": "computer", "group": "Remotedesktop",
+     "label": "Authentifizierung auf Netzwerkebene (NLA) verlangen", "type": "bool",
+     "help": "Aktiviert: Die Anmeldung wird geprüft, bevor eine Sitzung startet (empfohlen). "
+             "Deaktiviert: Verbindungen ohne NLA sind erlaubt."},
+    {"key": "consumer_features_off", "editions": ["enterprise", "education"], "scope": "computer", "group": "Datenschutz",
+     "label": "Microsoft-Verbraucherfeatures abschalten", "type": "bool",
+     "help": "Aktiviert: keine automatisch installierten Vorschlags-Apps und Werbung im Startmenü. Deaktiviert: "
+             "erlaubt. Wirkt nur unter Windows Enterprise und Education; Pro ignoriert die Einstellung."},
+    {"key": "telemetry_level", "scope": "computer", "group": "Datenschutz",
+     "label": "Diagnosedaten (Telemetrie)", "type": "enum",
+     "options": [{"value": 0, "label": "Sicherheit (nur Enterprise/Education)", "editions": ["enterprise", "education"]},
+                 {"value": 1, "label": "Erforderliche Diagnosedaten"},
+                 {"value": 3, "label": "Optionale Diagnosedaten"}],
+     "help": "Höchste Stufe, die Windows senden darf. Unter Pro und Home wirkt „Sicherheit“ wie „Erforderlich“."},
+    {"key": "store_off", "editions": ["enterprise", "education"], "scope": "computer", "group": "Datenschutz",
+     "label": "Microsoft Store sperren", "type": "bool",
+     "help": "Aktiviert: Die Store-App ist gesperrt; installierte Apps bekommen weiter Updates. Deaktiviert: "
+             "erlaubt. Wirkt nur unter Windows Enterprise und Education; Pro ignoriert die Einstellung."},
+    {"key": "display_off_ac_minutes", "scope": "computer", "group": "Energie",
+     "label": "Bildschirm aus nach (Netzbetrieb)", "type": "int", "min": 0, "max": 600, "unit": "Minuten",
+     "help": "0 = nie."},
+    {"key": "display_off_dc_minutes", "scope": "computer", "group": "Energie",
+     "label": "Bildschirm aus nach (Akku)", "type": "int", "min": 0, "max": 600, "unit": "Minuten",
+     "help": "0 = nie. Nur bei Geräten mit Akku."},
+    {"key": "sleep_ac_minutes", "scope": "computer", "group": "Energie",
+     "label": "Energiesparmodus nach (Netzbetrieb)", "type": "int", "min": 0, "max": 600, "unit": "Minuten",
+     "help": "0 = nie."},
+    {"key": "sleep_dc_minutes", "scope": "computer", "group": "Energie",
+     "label": "Energiesparmodus nach (Akku)", "type": "int", "min": 0, "max": 600, "unit": "Minuten",
+     "help": "0 = nie. Nur bei Geräten mit Akku."},
+    {"key": "edge_startup_urls", "scope": "computer", "group": "Microsoft Edge",
+     "label": "Beim Start öffnen", "type": "text", "max": 4000,
+     "help": f"Eine Adresse pro Zeile (https://…), höchstens {MAX_EDGE_URLS}. Edge öffnet beim Start genau diese "
+             "Seiten."},
+    {"key": "edge_homepage", "scope": "computer", "group": "Microsoft Edge",
+     "label": "Startseite (Home-Schaltfläche)", "type": "string", "max": 2000,
+     "help": "Adresse, z. B. https://intranet.example.com."},
+    {"key": "edge_password_manager_off", "scope": "computer", "group": "Microsoft Edge",
+     "label": "Passwort-Manager von Edge abschalten", "type": "bool",
+     "help": "Aktiviert: Edge bietet nicht an, Kennwörter zu speichern. Deaktiviert: erlaubt."},
+    {"key": "onedrive_off", "scope": "computer", "group": "OneDrive",
+     "label": "OneDrive abschalten", "type": "bool",
+     "help": "Aktiviert: OneDrive kann nicht für die Dateisynchronisierung genutzt werden. Deaktiviert: erlaubt."},
 ]
 
 CATALOG_BY_KEY = {c["key"]: c for c in CATALOG}
@@ -109,6 +204,15 @@ class Group:
     values: list[tuple[str, str]]
     decode: object  # (lookup) -> dict key -> value
     encode: object  # (settings) -> list[Entry]
+    prefix_keys: list[str] = field(default_factory=list)  # keys whose values all belong to the group
+
+    def owns(self, e: Entry) -> bool:
+        """The entry is one of the group's values, its '**del.' form, or a value of one of its list keys."""
+        k, v = e.ident()
+        for key, val in self.values:
+            if k == key.lower() and v in (val.lower(), "**del." + val.lower()):
+                return True
+        return any(k == p.lower() for p in self.prefix_keys)
 
 
 def _str(lookup, key, value):
@@ -157,6 +261,102 @@ def _string_group(name, scope, key, value):
         return [regpol.sz(key, value, v)] if v else []
 
     return Group(name, scope, [name], [(key, value)], decode, encode)
+
+
+def _same(lookup, e: Entry) -> bool:
+    cur = lookup(e.key, e.value)
+    return cur is not None and cur.type == e.type and regpol.entry_value(cur) == regpol.entry_value(e)
+
+
+def _set_group(name, scope, on: list[Entry], off: list[Entry]):
+    """A bool written as a set of entries: True = all of on, False = all of off and none of the other on values.
+
+    off may hold '**del.' entries (what the GPMC writes for "Deaktiviert" when the ADMX deletes the value).
+    """
+    values: list[tuple[str, str]] = []
+    for e in on + off:
+        v = e.value[len("**del."):] if e.value.lower().startswith("**del.") else e.value
+        if (e.key, v) not in values:
+            values.append((e.key, v))
+    off_idents = {e.ident() for e in off}
+
+    def decode(lookup):
+        if all(_same(lookup, e) for e in on):
+            return {name: True}
+        if all(_same(lookup, e) for e in off) and not any(
+                lookup(e.key, e.value) is not None for e in on if e.ident() not in off_idents):
+            return {name: False}
+        return {name: None}
+
+    def encode(s):
+        v = s.get(name)
+        return [] if v is None else list(on if v else off)
+
+    return Group(name, scope, [name], values, decode, encode)
+
+
+def _int_group(name, scope, key, value, factor=1):
+    """DWORD = setting × factor (e.g. minutes stored as seconds)."""
+    def decode(lookup):
+        v = _int(lookup, key, value)
+        return {name: None if v is None else (v + factor - 1) // factor}
+
+    def encode(s):
+        v = s.get(name)
+        return [] if v is None else [regpol.dword(key, value, v * factor)]
+
+    return Group(name, scope, [name], [(key, value)], decode, encode)
+
+
+def _enum_group(name, scope, key, value, allowed):
+    def decode(lookup):
+        v = _int(lookup, key, value)
+        return {name: v if v in allowed else None}
+
+    def encode(s):
+        v = s.get(name)
+        return [] if v is None else [regpol.dword(key, value, v)]
+
+    return Group(name, scope, [name], [(key, value)], decode, encode)
+
+
+def _edge_urls_group():
+    def decode(lookup):
+        if _int(lookup, K_EDGE, "RestoreOnStartup") != 4:
+            return {"edge_startup_urls": None}
+        urls = sorted(((int(e.value), regpol.entry_value(e)) for e in lookup.entries
+                       if e.key.lower() == K_EDGE_URLS.lower() and e.value.isdigit()), key=lambda x: x[0])
+        text = "\n".join(u for _, u in urls if isinstance(u, str) and u)
+        return {"edge_startup_urls": text or None}
+
+    def encode(s):
+        v = s.get("edge_startup_urls")
+        if not v:
+            return []
+        urls = [u.strip() for u in v.splitlines() if u.strip()]
+        return ([regpol.dword(K_EDGE, "RestoreOnStartup", 4), regpol.delete_values(K_EDGE_URLS)]
+                + [regpol.sz(K_EDGE_URLS, str(i + 1), u) for i, u in enumerate(urls)])
+
+    return Group("edge_startup", "computer", ["edge_startup_urls"], [(K_EDGE, "RestoreOnStartup")], decode,
+                 encode, prefix_keys=[K_EDGE_URLS])
+
+
+def _edge_home_group():
+    def decode(lookup):
+        return {"edge_homepage": _str(lookup, K_EDGE, "HomepageLocation") or None}
+
+    def encode(s):
+        v = s.get("edge_homepage")
+        return [regpol.sz(K_EDGE, "HomepageLocation", v), regpol.dword(K_EDGE, "HomepageIsNewTabPage", 0)] if v else []
+
+    return Group("edge_homepage", "computer", ["edge_homepage"],
+                 [(K_EDGE, "HomepageLocation"), (K_EDGE, "HomepageIsNewTabPage")], decode, encode)
+
+
+def _rdp_rule(proto: int, label: str) -> Entry:
+    rule = (f"v2.10|Action=Allow|Active=TRUE|Dir=In|Protocol={proto}|LPort=3389|"
+            f"Name=PK95 AD: Remotedesktop ({label} eingehend)|")
+    return regpol.sz(K_FW_RULES, f"PK95AD-RDP-{label}-In", rule)
 
 
 def _screen_decode(lookup):
@@ -248,13 +448,41 @@ GROUPS: list[Group] = [
     _bool_group("hide_last_username", "computer", K_SYSTEM, "DontDisplayLastUserName", 1),
     _string_group("logon_banner_title", "computer", K_SYSTEM, "LegalNoticeCaption"),
     _string_group("logon_banner_text", "computer", K_SYSTEM, "LegalNoticeText"),
+    # Paket 1 (1.2.0)
+    _set_group("firewall_enabled", "computer",
+               [regpol.dword(f"{K_FW}\\{p}Profile", "EnableFirewall", 1) for p in ("Domain", "Private", "Public")],
+               [regpol.dword(f"{K_FW}\\{p}Profile", "EnableFirewall", 0) for p in ("Domain", "Private", "Public")]),
+    _bool_group("defender_realtime", "computer", K_DEFENDER_RTP, "DisableRealtimeMonitoring", 0, 1),
+    _bool_group("defender_pua", "computer", K_DEFENDER, "PUAProtection", 1, 0),
+    _set_group("autorun_off", "computer",
+               [regpol.dword(K_EXPLORER_M, "NoDriveTypeAutoRun", 255), regpol.dword(K_EXPLORER_M, "NoAutorun", 1),
+                regpol.dword(K_WINEXPLORER, "NoAutoplayfornonVolume", 1)],
+               [regpol.delete_value(K_EXPLORER_M, "NoDriveTypeAutoRun"), regpol.delete_value(K_EXPLORER_M, "NoAutorun"),
+                regpol.dword(K_WINEXPLORER, "NoAutoplayfornonVolume", 0)]),
+    _bool_group("llmnr_off", "computer", K_DNSCLIENT, "EnableMulticast", 0, 1),
+    _bool_group("netbios_off", "computer", K_DNSCLIENT, "EnableNetbios", 0, 1),
+    _set_group("rdp_allow", "computer",
+               [regpol.dword(K_TS, "fDenyTSConnections", 0), _rdp_rule(6, "TCP"), _rdp_rule(17, "UDP")],
+               [regpol.dword(K_TS, "fDenyTSConnections", 1)]),
+    _bool_group("rdp_require_nla", "computer", K_TS, "UserAuthentication", 1, 0),
+    _bool_group("consumer_features_off", "computer", K_CLOUD, "DisableWindowsConsumerFeatures", 1, 0),
+    _enum_group("telemetry_level", "computer", K_DATACOLL, "AllowTelemetry", TELEMETRY),
+    _bool_group("store_off", "computer", K_STORE, "RemoveWindowsStore", 1, 0),
+    _int_group("display_off_ac_minutes", "computer", f"{K_POWER}\\{POWER_DISPLAY}", "ACSettingIndex", 60),
+    _int_group("display_off_dc_minutes", "computer", f"{K_POWER}\\{POWER_DISPLAY}", "DCSettingIndex", 60),
+    _int_group("sleep_ac_minutes", "computer", f"{K_POWER}\\{POWER_SLEEP}", "ACSettingIndex", 60),
+    _int_group("sleep_dc_minutes", "computer", f"{K_POWER}\\{POWER_SLEEP}", "DCSettingIndex", 60),
+    _edge_urls_group(),
+    _edge_home_group(),
+    _bool_group("edge_password_manager_off", "computer", K_EDGE, "PasswordManagerEnabled", 0, 1),
+    _bool_group("onedrive_off", "computer", K_ONEDRIVE, "DisableFileSyncNGSC", 1, 0),
 ]
 
 GROUP_OF_KEY = {k: g for g in GROUPS for k in g.keys}
 
 
-def managed_idents(scope: str) -> set[tuple[str, str]]:
-    return {(k.lower(), v.lower()) for g in GROUPS if g.scope == scope for k, v in g.values}
+def owned(scope: str, e: Entry) -> bool:
+    return any(g.scope == scope and g.owns(e) for g in GROUPS)
 
 
 def _lookup(entries: list[Entry]):
@@ -265,6 +493,7 @@ def _lookup(entries: list[Entry]):
     def lookup(key, value):
         return table.get((key.lower(), value.lower()))
 
+    lookup.entries = list(entries)  # for groups with list keys (Edge start pages)
     return lookup
 
 
@@ -385,8 +614,7 @@ def decode(entries: dict[str, list[Entry]], scripts: dict) -> dict:
 
 
 def unmanaged_count(entries: dict[str, list[Entry]]) -> dict[str, int]:
-    return {scope: sum(1 for e in entries.get(scope, []) if e.ident() not in managed_idents(scope))
-            for scope in SCOPES}
+    return {scope: sum(1 for e in entries.get(scope, []) if not owned(scope, e)) for scope in SCOPES}
 
 
 def normalise_script_path(path: str, realm: str) -> str:
@@ -489,6 +717,16 @@ def apply(entries: dict[str, list[Entry]], scripts: dict, body: dict, realm: str
         if body.get("wallpaper_style") is not None:
             f.add("settings.wallpaper_style", "Nur zusammen mit einem Hintergrundbild.")
         merged["wallpaper_style"] = None
+    if body.get("edge_startup_urls") and merged.get("edge_startup_urls"):
+        urls = [u.strip() for u in merged["edge_startup_urls"].splitlines() if u.strip()]
+        if len(urls) > MAX_EDGE_URLS:
+            f.add("settings.edge_startup_urls", f"Höchstens {MAX_EDGE_URLS} Adressen.")
+        bad = [u for u in urls if not _URL.match(u)]
+        if bad:
+            f.add("settings.edge_startup_urls", f"Keine gültige Adresse: {bad[0][:80]} (erwartet https://…).")
+        merged["edge_startup_urls"] = "\n".join(urls) or None
+    if body.get("edge_homepage") and merged.get("edge_homepage") and not _URL.match(merged["edge_homepage"]):
+        f.add("settings.edge_homepage", "Bitte eine Adresse angeben, z. B. https://intranet.example.com.")
     f.raise_if_any()
 
     touched_groups = {GROUP_OF_KEY[k].name for k in body if k in GROUP_OF_KEY}
@@ -496,8 +734,7 @@ def apply(entries: dict[str, list[Entry]], scripts: dict, body: dict, realm: str
     for g in GROUPS:
         if g.name not in touched_groups:
             continue
-        idents = {(k.lower(), v.lower()) for k, v in g.values}
-        kept = [e for e in new_entries[g.scope] if e.ident() not in idents]
+        kept = [e for e in new_entries[g.scope] if not g.owns(e)]
         new_entries[g.scope] = kept + g.encode(merged)
 
     new_scripts = {scope: {"scripts": _copy_ini((scripts.get(scope) or {}).get("scripts")),
