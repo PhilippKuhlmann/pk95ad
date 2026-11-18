@@ -180,6 +180,20 @@ def build(app: App) -> Router:
             return gpo.gpo_get(s, req.params["id"])
     r.add("PUT", f"/api/gpos/{ID}/settings", gpo_settings)
 
+    r.add("GET", f"/api/gpos/{ID}/drives", ready(lambda req, s: gpo.drives_get(s, req.params["id"])))
+
+    def gpo_drives(req):
+        app.require_ready()
+        with app.directory.session() as s:
+            changed = gpo.drives_put(s, req.params["id"], req.json())
+        if changed:
+            sysvol.reset_acls(app.cfg)  # new Preferences folders get the GPO's NT ACL
+        with app.directory.session() as s:
+            out = gpo.drives_get(s, req.params["id"])
+            out["version"] = gpo.gpo_get(s, req.params["id"])["version"]
+            return out
+    r.add("PUT", f"/api/gpos/{ID}/drives", gpo_drives)
+
     def link_add(req, s):
         gpo.link_add(s, req.params["id"], req.json())
         return Response(201, gpo.gpo_get(s, req.params["id"]))

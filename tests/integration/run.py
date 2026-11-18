@@ -267,6 +267,38 @@ def main():
     dexec("smbclient", "//127.0.0.1/sysvol", "-U", f"PK95TEST\\Administrator%{PASSWORD}", "-c",
           f"ls {REALM}\\Policies\\{guid}\\User\\*")
 
+    print("== Drive maps (Group Policy Preferences)")
+    user_version = gp["version"]["user"]
+    drive_items = [
+        {"letter": "V", "path": "\\\\nas.example.com\\vertrieb", "label": "Vertrieb",
+         "target": {"group_id": team["id"], "not": False}},
+        {"letter": "H", "first_available": True, "path": "\\\\nas.example.com\\home", "action": "replace",
+         "reconnect": False, "visibility": "show"},
+    ]
+    _, dr = call("PUT", f"/api/gpos/{gp['id']}/drives", {"items": drive_items}, expect=200)
+    check(len(dr["items"]) == 2 and dr["version"]["user"] == user_version + 1, f"drives saved {dr['version']}")
+    v_item = dr["items"][0]
+    check(v_item["uid"].startswith("{") and v_item["target"]["group_name"] == "Verkauf-Team"
+          and not v_item["readonly"], f"drive V {v_item}")
+    _, back = call("GET", f"/api/gpos/{gp['id']}/drives", expect=200)
+    check(back["items"] == dr["items"], "drives read back")
+    _, dr2 = call("PUT", f"/api/gpos/{gp['id']}/drives", {"items": back["items"]}, expect=200)
+    check(dr2["version"]["user"] == user_version + 1, "unchanged list keeps the version")
+    _, err = call("PUT", f"/api/gpos/{gp['id']}/drives",
+                  {"items": back["items"] + [{"letter": "V", "path": "\\\\nas\\x"}]}, expect=422)
+    check("items.2.letter" in err["fields"], "duplicate letter rejected")
+    _, g = call("GET", f"/api/gpos/{gp['id']}", expect=200)
+    check(g["drive_count"] == 2 and g["sysvol_ok"], f"drive_count {g['drive_count']}")
+    _, out = dexec("ldbsearch", "-H", "/var/lib/samba/private/sam.ldb", f"(name={guid})", "gPCUserExtensionNames")
+    unfolded = out.replace("\n ", "")  # LDIF folds long values at 78 characters
+    check("{5794DAFD-BE60-433F-88A2-1A31939AC01F}{2EA1A81B-48E5-45E9-8BB7-A6E3AC170006}" in unfolded.upper(),
+          "drive maps CSE in gPCUserExtensionNames")
+    dexec("smbclient", "//127.0.0.1/sysvol", "-U", f"PK95TEST\\Administrator%{PASSWORD}", "-c",
+          f"get {REALM}\\Policies\\{guid}\\User\\Preferences\\Drives\\Drives.xml /tmp/Drives.xml")
+    _, xml = dexec("cat", "/tmp/Drives.xml")
+    check("{935D1B74-9CB8-4e3c-9914-7DD559B7A417}" in xml and "nas.example.com\\vertrieb" in xml
+          and "cpassword" not in xml, "Drives.xml readable over SMB")
+
     print("== NETLOGON scripts")
     _, sc = call("PUT", "/api/scripts/logon.bat", {"content": "@echo off\nnet use H: \\\\nas\\home\n"},
                  expect=200)

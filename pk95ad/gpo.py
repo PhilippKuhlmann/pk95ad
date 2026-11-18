@@ -8,7 +8,7 @@ import re
 import shutil
 import uuid
 
-from . import gplink, gpsettings, regpol, sysvol, validate
+from . import drives, gplink, gpsettings, regpol, sysvol, validate
 from .directory import Session, gentime_ms
 from .errors import ApiError, Fields, conflict, forbidden, invalid, not_found
 
@@ -151,6 +151,7 @@ def _gpo(s: Session, gid: str, msg, links_map) -> dict:
         "version": {"computer": v & 0xFFFF, "user": v >> 16},
         "links": links_map.get(gid, []),
         "sysvol_ok": gpt_ok and sysvol.gpt_version(_gpt_text(gdir)) == v,
+        "drive_count": drive_count(gdir),
     }
 
 
@@ -196,7 +197,7 @@ def gpo_get(s: Session, oid: str) -> dict:
     ext = set()
     for scope in FOLDERS:
         for it in ext_parse(s.val(msg, EXT_ATTR[scope])):
-            if it[0] not in (REGISTRY_CSE, SCRIPTS_CSE, "{00000000-0000-0000-0000-000000000000}"):
+            if it[0] not in (REGISTRY_CSE, SCRIPTS_CSE, drives.CSE, "{00000000-0000-0000-0000-000000000000}"):
                 ext.add(CSE_NAMES.get(it[0], it[0]))
     out["other_settings"] = {"computer": counts["computer"], "user": counts["user"], "extensions": sorted(ext)}
     return out
@@ -300,7 +301,21 @@ def gpo_set_settings(s: Session, oid: str, body: dict) -> bool:
             else:
                 sysvol.write_bytes(path, gpsettings.serialize_scripts_ini(ini))
 
-    gpt_path = sysvol.ci_join(gdir, "GPT.INI")
+    version = _bump_version(s, msg, gdir, changed)
+    attrs = {"versionNumber": str(version)}
+    for scope in FOLDERS:
+        items = ext_parse(s.val(msg, EXT_ATTR[scope]))
+        has_reg = bool(new_entries[scope])
+        has_scripts = not (new_scripts[scope]["scripts"].empty() and new_scripts[scope]["psscripts"].empty())
+        items = ext_set(items, REGISTRY_CSE, TOOLS[("registry", scope)], has_reg)
+        items = ext_set(items, SCRIPTS_CSE, TOOLS[("scripts", scope)], has_scripts)
+        attrs[EXT_ATTR[scope]] = ext_format(items) or None
+    s.replace(msg.dn, attrs)
+    return True
+
+
+def _bump_version(s: Session, msg, gdir: str, changed: set[str]) -> int:
+    """Raise the version of the changed halves in GPT.INI (written here) and return the new versionNumber."""
     gpt = _gpt_text(gdir)
     v_ad, v_gpt = s.num(msg, "versionNumber"), sysvol.gpt_version(gpt)
     user = max(v_ad >> 16, v_gpt >> 16)
@@ -310,17 +325,78 @@ def gpo_set_settings(s: Session, oid: str, body: dict) -> bool:
     if "user" in changed:
         user = (user + 1) & 0xFFFF or 1
     version = (user << 16) | machine
+    sysvol.write_bytes(sysvol.ci_join(gdir, "GPT.INI"), sysvol.gpt_set_version(gpt, version).encode("utf-8"))
+    return version
 
-    attrs = {"versionNumber": str(version)}
-    for scope in FOLDERS:
-        items = ext_parse(s.val(msg, EXT_ATTR[scope]))
-        has_reg = bool(new_entries[scope])
-        has_scripts = not (new_scripts[scope]["scripts"].empty() and new_scripts[scope]["psscripts"].empty())
-        items = ext_set(items, REGISTRY_CSE, TOOLS[("registry", scope)], has_reg)
-        items = ext_set(items, SCRIPTS_CSE, TOOLS[("scripts", scope)], has_scripts)
-        attrs[EXT_ATTR[scope]] = ext_format(items) or None
-    sysvol.write_bytes(gpt_path, sysvol.gpt_set_version(gpt, version).encode("utf-8"))
-    s.replace(msg.dn, attrs)
+
+# --- drive maps (Group Policy Preferences) -------------------------------------------------------------
+
+def _drives_path(gdir: str, create: bool = False) -> str:
+    return sysvol.ci_join(gdir, "User", "Preferences", "Drives", "Drives.xml", create=create)
+
+
+def _drives_root(gdir: str):
+    try:
+        return drives.parse(sysvol.read_bytes(_drives_path(gdir)))
+    except drives.DrivesError as exc:
+        raise conflict(f"User\\Preferences\\Drives\\Drives.xml: {exc} Bitte mit der Windows-GPMC prüfen.")
+
+
+def drive_count(gdir: str) -> int:
+    try:
+        return len(drives.items(_drives_root(gdir)))
+    except ApiError:
+        return 0
+
+
+def _group_by_sid(s: Session):
+    def lookup(sid: str):
+        if not re.match(r"^S-1-[0-9-]+$", sid or ""):
+            return None
+        res = s.search(expression=f"(objectSid={sid})", attrs=["objectGUID", "sAMAccountName"])
+        return {"id": s.guid(res[0]), "name": s.val(res[0], "sAMAccountName")} if len(res) else None
+    return lookup
+
+
+def _group_by_id(s: Session):
+    netbios = s.settings.get("netbios_domain", "")
+
+    def lookup(gid):
+        try:
+            g = s.find(gid, attrs=["objectClass", "objectSid", "sAMAccountName", "groupType"], what="Gruppe")
+        except ApiError:
+            return "Gruppe nicht gefunden."
+        if "group" not in s.classes(g):
+            return "Das ist keine Gruppe."
+        if not (s.num(g, "groupType") & 0x80000000):
+            return "Nur Sicherheitsgruppen wirken bei der Zielgruppenadressierung (keine Verteilergruppen)."
+        return {"name": f"{netbios}\\{s.val(g, 'sAMAccountName')}", "sid": s.sid(g)}
+    return lookup
+
+
+def drives_get(s: Session, oid: str) -> dict:
+    gid, _ = _find(s, oid)
+    root = _drives_root(_dir(s, gid))
+    by_sid = _group_by_sid(s)
+    return {"items": [drives.to_json(e, by_sid) for e in drives.items(root)]}
+
+
+def drives_put(s: Session, oid: str, body: dict) -> bool:
+    """Replace the drive maps; returns True when files changed (then SYSVOL ACLs need a reset)."""
+    gid, msg = _find(s, oid)
+    gdir = _dir(s, gid, create=True)
+    root = _drives_root(gdir)
+    new_root, changed = drives.apply(root, body.get("items"), _group_by_id(s))
+    if not changed:
+        return False
+    path = _drives_path(gdir, create=bool(drives.items(new_root)))
+    if drives.items(new_root):
+        sysvol.write_bytes(path, drives.serialize(new_root))
+    else:
+        sysvol.remove(path)
+    version = _bump_version(s, msg, gdir, {"user"})
+    items = ext_set(ext_parse(s.val(msg, EXT_ATTR["user"])), drives.CSE, drives.TOOL, bool(drives.items(new_root)))
+    s.replace(msg.dn, {"versionNumber": str(version), EXT_ATTR["user"]: ext_format(items) or None})
     return True
 
 
