@@ -74,6 +74,27 @@ that look up a DC through SRV records (`samba-tool gpo …` without `-H`) still 
 PK95 DNS; the app itself never calls them (GPOs are written in-process), manual calls should pass
 `-H ldap://127.0.0.1`.
 
+### DNS of the DC itself (1.1.1)
+
+With host network the container gets a copy of the LXC's `/etc/resolv.conf` – usually the router, which does not
+know the AD zone. `samba_dnsupdate` (run by Samba every few minutes) looks up each record the DC needs through that
+resolver (`/etc/resolv.conf`, always port 53), gets NXDOMAIN, and calls `samba-tool dns add` for every record,
+which fails with `WERR_DNS_ERROR_RECORD_ALREADY_EXISTS` because the records are there. Its exit code is the number
+of failed records (`sys.exit(error_count)`), hence `Failed DNS update with exit code 29` / `110` in Samba's log –
+the same cause, counted per run.
+
+The app therefore points the container's resolver at PK95 DNS, the same way a Windows DC uses itself as DNS
+server: on every start and every 30 s it sends an SOA query for the realm to `127.0.0.1:53`; once PK95 DNS answers
+it (the conditional forwarding rule exists), `/etc/resolv.conf` becomes `nameserver 127.0.0.1`, then up to two of
+the LXC's nameservers as fallback, `search <realm> <old search domains>`, `options timeout:2 attempts:2`. The
+original lines are kept as `# pk95ad-original:` comments, so rewriting never loses them (Docker gives the
+container its own copy, written in place). As long as nothing on `127.0.0.1:53` answers the zone the file stays
+untouched and `GET /api/domain` → `resolver` explains why.
+
+Why not only `samba_dnsupdate`: it can be pointed at another resolv.conf (`RESOLV_CONF`), but a resolv.conf has no
+port, so it could not ask Samba on 5300 directly either – it would need PK95 DNS on 53 as well. Kerberos and
+Samba's own tools on the DC also resolve through `/etc/resolv.conf`, so one system-wide answer is simpler.
+
 Known limit: Windows clients send dynamic DNS updates to port 53 of the SOA server (the DC), i.e. to PK95 DNS,
 which does not forward `UPDATE`. Client A/PTR records therefore do not register themselves; add them with
 `/api/dns/…` when needed (AD logon does not need them). The DC's own records are created by the provisioning;

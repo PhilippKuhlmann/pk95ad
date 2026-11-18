@@ -328,6 +328,40 @@ def main():
     _, d = call("GET", "/api/domain", expect=200)
     check(d["idmap"]["ok"], f"idmap after file access {d['idmap']}")
 
+    print("== DNS of the DC itself (samba_dnsupdate)")
+    # Like the LXC before PK95 DNS forwards the realm: the container's resolver does not know the zone.
+    _, d = call("GET", "/api/domain", expect=200)
+    check(not d["resolver"]["ok"] and "127.0.0.1:53" in d["resolver"]["message"], f"resolver {d['resolver']}")
+    rc, out = dexec("samba_dnsupdate", "--verbose", "--use-samba-tool", ok=False)
+    print("    before: " + " | ".join(line for line in out.splitlines()
+                                       if "does not exist" in line.lower() or "Failed update" in line)[:2000])
+    check(rc != 0 and "already exist" in out.lower(), f"before: samba_dnsupdate fails with 'already exists' (rc {rc})")
+    # PK95 DNS in the same network namespace (like on the LXC), forwarding the realm to Samba on 5300.
+    subprocess.run(["docker", "rm", "-f", "pk95dns"], capture_output=True)
+    subprocess.run(["docker", "run", "-d", "--name", "pk95dns", "--network", f"container:{CONTAINER}",
+                    "-e", "PK95_CORE_MODE=1", "-e", f"PK95_CORE_TOKEN={TOKEN}",
+                    "-e", "PK95DNS_LISTEN=127.0.0.1:8053", "ghcr.io/philippkuhlmann/pk95-dns:latest"],
+                   check=True, capture_output=True)
+    dexec("python3", "-c", (
+        "import json, time, urllib.request\n"
+        "h = {'Authorization': 'Bearer " + TOKEN + "', 'Content-Type': 'application/json'}\n"
+        "for _ in range(60):\n"
+        "    try:\n"
+        "        urllib.request.urlopen('http://127.0.0.1:8053/core/health', timeout=2); break\n"
+        "    except OSError: time.sleep(1)\n"
+        "body = json.dumps({'conditional': [{'domain': '" + REALM + "', 'upstream': '127.0.0.1:5300'}]}).encode()\n"
+        "r = urllib.request.Request('http://127.0.0.1:8053/api/settings', data=body, method='PUT', headers=h)\n"
+        "print(json.load(urllib.request.urlopen(r, timeout=10))['conditional'])\n"))
+    d = wait(lambda: (lambda x: x if x["resolver"]["ok"] else None)(call("GET", "/api/domain")[1]),
+             "resolver switched to PK95 DNS", 120)
+    check(d["resolver"]["nameserver"] == "127.0.0.1", f"resolver {d['resolver']}")
+    _, conf = dexec("cat", "/etc/resolv.conf")
+    active = [x for x in conf.splitlines() if x and not x.startswith("#")]
+    check(active[0] == "nameserver 127.0.0.1" and active[-2].startswith(f"search {REALM}"), f"resolv.conf {active}")
+    rc, out = dexec("samba_dnsupdate", "--verbose", "--use-samba-tool", ok=False)
+    check(rc == 0 and "already exist" not in out.lower(), f"after: samba_dnsupdate clean (rc {rc})")
+    subprocess.run(["docker", "rm", "-f", "pk95dns"], capture_output=True)  # shares our netns: gone before restart
+
     print("== cleanup and move")
     _, other = call("POST", "/api/ous", {"name": "Andere"}, expect=201)
     call("POST", "/api/move", {"ids": [u["id"], team["id"]], "target_id": other["id"]}, expect=200)
