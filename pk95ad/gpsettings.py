@@ -43,12 +43,16 @@ CATALOG: list[dict] = [
      "help": "Nur zusammen mit einem Hintergrundbild."},
     {"key": "deny_control_panel", "scope": "user", "group": "Einschränkungen",
      "label": "Systemsteuerung und Einstellungen sperren", "type": "bool",
-     "help": "Ja: gesperrt. Nein: ausdrücklich erlaubt."},
+     "help": "Aktiviert: Systemsteuerung und Einstellungen-App sind gesperrt. "
+             "Deaktiviert: ausdrücklich erlaubt, auch wenn eine andere Richtlinie sie sperrt."},
     {"key": "deny_cmd", "scope": "user", "group": "Einschränkungen",
      "label": "Eingabeaufforderung sperren", "type": "bool",
-     "help": "Anmeldeskripte laufen weiter."},
+     "help": "Aktiviert: cmd.exe ist gesperrt, Anmeldeskripte laufen weiter. "
+             "Deaktiviert: ausdrücklich erlaubt, auch wenn eine andere Richtlinie sie sperrt."},
     {"key": "deny_registry_tools", "scope": "user", "group": "Einschränkungen",
-     "label": "Registrierungs-Editor sperren", "type": "bool", "help": ""},
+     "label": "Registrierungs-Editor sperren", "type": "bool",
+     "help": "Aktiviert: regedit ist gesperrt. "
+             "Deaktiviert: ausdrücklich erlaubt, auch wenn eine andere Richtlinie ihn sperrt."},
     {"key": "logon_scripts", "scope": "user", "group": "Skripte",
      "label": "Anmeldeskripte", "type": "scripts", "max": MAX_SCRIPTS,
      "help": "Dateiname in NETLOGON (z. B. logon.bat) oder UNC-Pfad. .ps1 läuft als PowerShell-Skript."},
@@ -56,7 +60,8 @@ CATALOG: list[dict] = [
      "label": "Abmeldeskripte", "type": "scripts", "max": MAX_SCRIPTS, "help": ""},
     {"key": "removable_storage_deny", "scope": "computer", "group": "Geräte",
      "label": "Wechseldatenträger sperren (USB-Speicher)", "type": "bool",
-     "help": "Sperrt Lesen und Schreiben auf allen Wechselspeichern."},
+     "help": "Aktiviert: Lesen und Schreiben auf allen Wechselspeichern (USB-Sticks, externe Platten, SD-Karten) "
+             "ist gesperrt. Deaktiviert: ausdrücklich erlaubt, auch wenn eine andere Richtlinie sie sperrt."},
     {"key": "windows_update_mode", "scope": "computer", "group": "Windows Update",
      "label": "Automatische Updates", "type": "enum",
      "options": [{"value": "off", "label": "Aus"},
@@ -72,7 +77,9 @@ CATALOG: list[dict] = [
      "label": "Installationszeit", "type": "int", "min": 0, "max": 23, "unit": "Uhr",
      "help": "Nur mit „Automatisch installieren“."},
     {"key": "hide_last_username", "scope": "computer", "group": "Anmeldung",
-     "label": "Letzten Benutzernamen nicht anzeigen", "type": "bool", "help": ""},
+     "label": "Letzten Benutzernamen nicht anzeigen", "type": "bool",
+     "help": "Aktiviert: Der Anmeldebildschirm zeigt den zuletzt angemeldeten Benutzer nicht an. "
+             "Deaktiviert: Er wird angezeigt."},
     {"key": "logon_banner_title", "scope": "computer", "group": "Anmeldung",
      "label": "Hinweis vor der Anmeldung: Titel", "type": "string", "max": 200, "help": ""},
     {"key": "logon_banner_text", "scope": "computer", "group": "Anmeldung",

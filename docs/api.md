@@ -40,7 +40,7 @@ answers (everything else `401`). Useful for scripts and tests.
 
 ## Core protocol routes
 
-- `GET /core/health` → `200 {"ok": true, "version": "1.1.1", "state": "ready"}` as soon as the API serves
+- `GET /core/health` → `200 {"ok": true, "version": "1.1.2", "state": "ready"}` as soon as the API serves
   requests – also before setup (`state: "unconfigured"`) and while Samba is down (that shows up in
   `/api/status` and as event `ad.samba.down`).
 - `GET /core/manifest` → see below.
@@ -55,7 +55,7 @@ answers (everything else `401`). Useful for scripts and tests.
 {
   "id": "ad",
   "name": "PK95 AD",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "protocol": 1,
   "icon": "key",
   "menu": [
@@ -158,7 +158,7 @@ start Samba, wait until LDAP answers, send `ad.setup.done`.
 
 ```json
 {
-  "version": "1.1.1",
+  "version": "1.1.2",
   "core_mode": true,
   "state": "ready",
   "started_at": 1762700000000,
