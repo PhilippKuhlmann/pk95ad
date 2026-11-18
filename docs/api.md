@@ -40,7 +40,7 @@ answers (everything else `401`). Useful for scripts and tests.
 
 ## Core protocol routes
 
-- `GET /core/health` → `200 {"ok": true, "version": "1.2.0", "state": "ready"}` as soon as the API serves
+- `GET /core/health` → `200 {"ok": true, "version": "1.3.0", "state": "ready"}` as soon as the API serves
   requests – also before setup (`state: "unconfigured"`) and while Samba is down (that shows up in
   `/api/status` and as event `ad.samba.down`).
 - `GET /core/manifest` → see below.
@@ -55,7 +55,7 @@ answers (everything else `401`). Useful for scripts and tests.
 {
   "id": "ad",
   "name": "PK95 AD",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "protocol": 1,
   "icon": "key",
   "menu": [
@@ -158,7 +158,7 @@ start Samba, wait until LDAP answers, send `ad.setup.done`.
 
 ```json
 {
-  "version": "1.2.0",
+  "version": "1.3.0",
   "core_mode": true,
   "state": "ready",
   "started_at": 1762700000000,
@@ -662,6 +662,80 @@ When the list changes, the user half of the version goes up (`GPT.INI` and `vers
 `gPCUserExtensionNames` gets `[{5794DAFD-BE60-433F-88A2-1A31939AC01F}{2EA1A81B-48E5-45E9-8BB7-A6E3AC170006}]`
 (removed again when the list becomes empty; the file is deleted then). Drive maps are no longer counted in
 `other_settings.extensions`.
+
+### Preferences: local groups, printers, shortcuts (new in 1.3.0)
+
+Three more Group Policy Preferences lists, built like drive maps and written in the form the GPMC writes
+(values checked against [MS-GPPREF]):
+
+| List | Route | Side | File | CSE / tool extension |
+|---|---|---|---|---|
+| local groups | `/api/gpos/{id}/local-groups` | computer | `Machine\Preferences\Groups\Groups.xml` | `{17D89FEC-5C44-4972-B12D-241CAEF74509}` / `{79F92669-4224-476C-9C5C-6EFB4D87DF4A}` |
+| printers | `/api/gpos/{id}/printers` | user | `User\Preferences\Printers\Printers.xml` | `{BC75B1ED-5833-4858-9BB8-CBF0B166DF9D}` / `{A8C42CEA-CDB8-4388-97F4-5831F933DA84}` |
+| shortcuts | `/api/gpos/{id}/shortcuts` | user | `User\Preferences\Shortcuts\Shortcuts.xml` | `{C418DD9D-0D14-4EFB-8FBF-CFE535C8FAC7}` / `{CEFFA6E2-E3BD-421B-852C-6F6A79A59BC1}` |
+
+Same for all lists:
+
+- `GET` → `200 {"items": [item…]}` in file order; `PUT {"items": [item…]}` replaces the list →
+  `200 {"items": […], "version": {"computer", "user"}}`. A change raises the version of that side, sets the CSE pair
+  in `gPC{Machine,User}ExtensionNames` (removed again with an empty list; the file is deleted then) and resets the
+  SYSVOL ACLs. An unchanged list changes nothing.
+- Every item has `uid` (omit for new items, send back unchanged for existing ones), `target`
+  (`{"group_id", "group_name" (read-only), "not": bool}` or `null` – item-level targeting on one security group:
+  all / only members / everyone except members), and the read-only `changed_at`, `readonly`, `warning`. Items the
+  GPMC wrote with features PK95 AD does not edit come back `readonly` with a German `warning`; sending them back keeps
+  them unchanged, leaving them out deletes them. At most 50 items per list. Passwords are never written.
+- Field errors: `422 items.N.<field>`, nested e.g. `items.N.members.M.id`.
+- The GPO object gets `preference_counts`: `{"drives": n, "local_groups": n, "printers": n, "shortcuts": n}`
+  (`drive_count` stays).
+
+**Local group** – one built-in local group with a member list and the GPMC switches "Delete all member users /
+groups":
+
+```json
+{ "uid": "{…}", "group": "administrators",
+  "members": [ { "id": "…", "name": "PK95\\Helpdesk", "kind": "group", "action": "add" } ],
+  "remove_other_users": false, "remove_other_groups": false,
+  "target": null, "changed_at": 0, "readonly": false, "warning": "" }
+```
+
+| field | rule |
+|---|---|
+| `group` | `administrators` (S-1-5-32-544), `users` (-545), `backup_operators` (-551), `remote_desktop_users` (-555), `network_configuration_operators` (-556), `event_log_readers` (-573), `remote_management_users` (-580); at most once per GPO (`items.N.group`) |
+| `members[]` | `id` of a domain user or security group (`items.N.members.M.id`), once per item; `action` `add` (default) or `remove`; `name`, `kind` read-only. At most 100. |
+| `remove_other_users`, `remove_other_groups` | remove every member that is not listed (UIs should warn clearly) |
+
+No lock-out: for `administrators` with one of the switches on, the app always adds Domain Admins (`add`);
+Domain Admins with `action: remove` → `422 items.N.members.M.action`. Local accounts (also the built-in
+Administrator, RID 500) cannot be chosen, so they are never removed by name. The item action is always "Update".
+
+**Printer** – shared printers only (TCP/IP printers need the driver on the client; GPMC items of that kind stay
+read-only):
+
+```json
+{ "uid": "{…}", "path": "\\\\print.example.com\\Buero", "action": "update", "default": false, "target": null, … }
+```
+
+`path` `\\server\share` (`items.N.path`, unique per GPO); `action` `create`, `replace`, `update` (default), `delete`;
+`default` = make it the default printer. Since the PrintNightmare updates normal users cannot install drivers
+from a print server: the driver has to be on the client already (or be installed by an admin).
+
+**Shortcut**:
+
+```json
+{ "uid": "{…}", "name": "Intranet", "target_type": "url", "target_path": "https://intranet.example.com",
+  "location": "desktop", "arguments": "", "icon_path": "", "icon_index": 0, "action": "update", "target": null, … }
+```
+
+| field | rule |
+|---|---|
+| `name` | 1–100 chars, no `\ / : * ? " < > |`; unique per `location` (`items.N.name`) |
+| `target_type` | `url` (http/https address) or `file` (UNC path to a file or folder) |
+| `target_path` | the shortcut's target (`target` is the targeting group, as everywhere) |
+| `location` | `desktop` (`%DesktopDir%`), `start_menu` (`%StartMenuDir%`), `programs` (`%ProgramsDir%`) of the user |
+| `arguments` | only with `file`, max 260 |
+| `icon_path`, `icon_index` | optional icon: UNC, `X:\…` or `%Variable%\…` path (max 260), index 0–255 |
+| `action` | `create`, `replace`, `update` (default), `delete` |
 
 ### Inheritance
 
