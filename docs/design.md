@@ -105,10 +105,35 @@ Assumptions (checked by provisioning; a failure ends in `state: failed` with a G
    overwrite it through the share; only local access in the container can. Nobody but the app has that.
 3. Samba runs as root inside the container (no file capabilities in an unprivileged LXC).
 
-CI provisions a domain inside a plain Docker container (no `CAP_SYS_ADMIN`, so `security.*` fails there as
+CI provisions a domain inside a Docker container with `userns-remap` (no `CAP_SYS_ADMIN` and only 65536 IDs, like
+the LXC; `security.*` fails there as
 well) and checks `getfattr -n user.NTACL` on SYSVOL, `samba-tool ntacl get`, `samba-tool gpo aclcheck` and SMB access
 to SYSVOL/NETLOGON. A real domain join
 needs the LXC and a Windows client.
+
+## Unix IDs (unprivileged LXC)
+
+The LXC maps only 65536 IDs (`/proc/self/uid_map`: `0 100000 65536`), so inside it only the IDs 0–65535
+exist and a `chown` to a higher ID fails with `EINVAL`. Samba gives every SID that touches the file system
+(well-known groups such as SYSTEM or Authenticated Users, users opening SMB shares, …) a Unix ID from the
+range in `idmap.ldb` (`CN=CONFIG`: `lowerBound`/`upperBound`), by default 3000000–4000000, and chowns SYSVOL
+files to it. In the LXC that made provisioning abort with `PANIC: Security context active token stack
+underflow` (in `set_nt_acl → chown_if_needed`).
+
+| Range | Used for |
+|---|---|
+| 0–9999 | system accounts and Samba's fixed mappings (Administrator → root 0, Domain Users → users 100) |
+| 10000–19999 | RFC2307 `uidNumber`/`gidNumber` set by hand (NIS attributes; `msSFU30MaxUidNumber` starts at 10000). PK95 AD sets none. |
+| 20000–59999 | Samba's automatic IDs (`idmap.ldb`) |
+| 60000–65535 | left free (Debian reserve, `nobody` = 65534, the fixed mapping of Guest) |
+
+The image patches `/usr/share/samba/setup/idmap_init.ldif` (from which provisioning creates `idmap.ldb`) to
+20000–59999; the build fails if the patch does not apply. Setup refuses to run with an unpatched file and checks
+`idmap.ldb` after provisioning. `GET /api/domain` → `idmap` reports the range, the next ID and problems (a domain
+provisioned with 1.0.0 outside the LXC, `uidNumber`s outside 10000–19999, range nearly used up). Samba's C
+allocator reads only these bounds (`source4/winbind/idmap.c`), so `sysvolreset`, new GPOs and scripts and smbd
+mapping a user without `uidNumber` all stay in the range; CI checks that under `userns-remap` (65536 IDs like
+the LXC). A new setup after a failed one removes `idmap.ldb` with everything else under `/var/lib/samba`.
 
 ## Files and volumes
 
