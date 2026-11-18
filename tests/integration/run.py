@@ -290,7 +290,8 @@ def main():
     _, g = call("GET", f"/api/gpos/{gp['id']}", expect=200)
     check(g["drive_count"] == 2 and g["sysvol_ok"], f"drive_count {g['drive_count']}")
     _, out = dexec("ldbsearch", "-H", "/var/lib/samba/private/sam.ldb", f"(name={guid})", "gPCUserExtensionNames")
-    check("{5794DAFD-BE60-433F-88A2-1A31939AC01F}{2EA1A81B-48E5-45E9-8BB7-A6E3AC170006}" in out.upper(),
+    unfolded = out.replace("\n ", "")  # LDIF folds long values at 78 characters
+    check("{5794DAFD-BE60-433F-88A2-1A31939AC01F}{2EA1A81B-48E5-45E9-8BB7-A6E3AC170006}" in unfolded.upper(),
           "drive maps CSE in gPCUserExtensionNames")
     dexec("smbclient", "//127.0.0.1/sysvol", "-U", f"PK95TEST\\Administrator%{PASSWORD}", "-c",
           f"get {REALM}\\Policies\\{guid}\\User\\Preferences\\Drives\\Drives.xml /tmp/Drives.xml")
