@@ -142,6 +142,13 @@ class Package1Test(unittest.TestCase):
             if c["type"] == "bool":
                 self.assertTrue(c["help"].startswith("Aktiviert:") and "Deaktiviert:" in c["help"], c["key"])
         self.assertEqual(len({c["key"] for c in gs.CATALOG}), len(gs.CATALOG))
+        editions = {"home", "pro", "enterprise", "education"}
+        for c in gs.CATALOG:
+            for item in [c] + c.get("options", []):
+                self.assertTrue(set(item.get("editions", [])) <= editions, c["key"])
+        by_key = gs.CATALOG_BY_KEY
+        self.assertEqual(by_key["store_off"]["editions"], ["enterprise", "education"])
+        self.assertNotIn("editions", by_key["firewall_enabled"])
 
     def test_firewall_all_profiles(self):
         entries, _, settings, changed = gs.apply(*empty(), {"firewall_enabled": True}, REALM)

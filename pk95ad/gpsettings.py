@@ -133,26 +133,26 @@ CATALOG: list[dict] = [
      "label": "NetBIOS-Namensauflösung abschalten", "type": "bool",
      "help": "Aktiviert: keine NetBIOS-Namensauflösung. Deaktiviert: erlaubt. Wirkt erst ab Windows 11 22H2; "
              "ältere Windows-Versionen ignorieren die Einstellung."},
-    {"key": "rdp_allow", "scope": "computer", "group": "Remotedesktop",
+    {"key": "rdp_allow", "editions": ["pro", "enterprise", "education"], "scope": "computer", "group": "Remotedesktop",
      "label": "Remotedesktop-Verbindungen erlauben", "type": "bool",
      "help": "Aktiviert: Remotedesktop ist an, und die Windows-Firewall lässt TCP/UDP 3389 eingehend zu. Wer sich "
              "anmelden darf, regelt die lokale Gruppe Remotedesktopbenutzer. Deaktiviert: Remotedesktop ist gesperrt. "
              "Nur Windows Pro, Enterprise und Education; Home kann keine Verbindungen annehmen."},
-    {"key": "rdp_require_nla", "scope": "computer", "group": "Remotedesktop",
+    {"key": "rdp_require_nla", "editions": ["pro", "enterprise", "education"], "scope": "computer", "group": "Remotedesktop",
      "label": "Authentifizierung auf Netzwerkebene (NLA) verlangen", "type": "bool",
      "help": "Aktiviert: Die Anmeldung wird geprüft, bevor eine Sitzung startet (empfohlen). "
              "Deaktiviert: Verbindungen ohne NLA sind erlaubt."},
-    {"key": "consumer_features_off", "scope": "computer", "group": "Datenschutz",
+    {"key": "consumer_features_off", "editions": ["enterprise", "education"], "scope": "computer", "group": "Datenschutz",
      "label": "Microsoft-Verbraucherfeatures abschalten", "type": "bool",
      "help": "Aktiviert: keine automatisch installierten Vorschlags-Apps und Werbung im Startmenü. Deaktiviert: "
              "erlaubt. Wirkt nur unter Windows Enterprise und Education; Pro ignoriert die Einstellung."},
     {"key": "telemetry_level", "scope": "computer", "group": "Datenschutz",
      "label": "Diagnosedaten (Telemetrie)", "type": "enum",
-     "options": [{"value": 0, "label": "Sicherheit (nur Enterprise/Education)"},
+     "options": [{"value": 0, "label": "Sicherheit (nur Enterprise/Education)", "editions": ["enterprise", "education"]},
                  {"value": 1, "label": "Erforderliche Diagnosedaten"},
                  {"value": 3, "label": "Optionale Diagnosedaten"}],
      "help": "Höchste Stufe, die Windows senden darf. Unter Pro und Home wirkt „Sicherheit“ wie „Erforderlich“."},
-    {"key": "store_off", "scope": "computer", "group": "Datenschutz",
+    {"key": "store_off", "editions": ["enterprise", "education"], "scope": "computer", "group": "Datenschutz",
      "label": "Microsoft Store sperren", "type": "bool",
      "help": "Aktiviert: Die Store-App ist gesperrt; installierte Apps bekommen weiter Updates. Deaktiviert: "
              "erlaubt. Wirkt nur unter Windows Enterprise und Education; Pro ignoriert die Einstellung."},

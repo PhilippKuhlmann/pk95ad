@@ -543,6 +543,9 @@ Values in `PUT …/settings` work like the Windows GPMC: `null` = not configured
 `true` = enabled, `false` = explicitly disabled (the value is written with its disabled value, e.g. `DisableCMD=0`,
 `NoControlPanel=0`, `Deny_All=0`, so it overrides a GPO with lower precedence).
 
+`editions` (new in 1.2.0, optional, on an entry or on an enum option): the Windows editions the setting works on,
+from `home`, `pro`, `enterprise`, `education`. Missing = all editions. Other editions ignore the value (Core shows a badge).
+
 `type`: `bool`, `int` (`min`, `max`, `unit`), `enum` (`options: [{"value", "label"}]`), `string` (`max`,
 optional `pattern`), `text` (multi-line, `max`), `scripts` (list of `{"path", "parameters"}`). `GET /api/gpos/{id}`
 answers `settings` with every catalog key, `null` when not configured.
