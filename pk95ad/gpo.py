@@ -8,7 +8,7 @@ import re
 import shutil
 import uuid
 
-from . import drives, gplink, gpsettings, regpol, sysvol, validate
+from . import drives, gplink, gpp, gpsettings, regpol, sysvol, validate
 from .directory import Session, gentime_ms
 from .errors import ApiError, Fields, conflict, forbidden, invalid, not_found
 
@@ -152,6 +152,8 @@ def _gpo(s: Session, gid: str, msg, links_map) -> dict:
         "links": links_map.get(gid, []),
         "sysvol_ok": gpt_ok and sysvol.gpt_version(_gpt_text(gdir)) == v,
         "drive_count": drive_count(gdir),
+        "preference_counts": {"drives": drive_count(gdir),
+                              **{k.name: prefs_count(gdir, k) for k in gpp.KINDS.values()}},
     }
 
 
@@ -197,7 +199,8 @@ def gpo_get(s: Session, oid: str) -> dict:
     ext = set()
     for scope in FOLDERS:
         for it in ext_parse(s.val(msg, EXT_ATTR[scope])):
-            if it[0] not in (REGISTRY_CSE, SCRIPTS_CSE, drives.CSE, "{00000000-0000-0000-0000-000000000000}"):
+            if it[0] not in (REGISTRY_CSE, SCRIPTS_CSE, drives.CSE, "{00000000-0000-0000-0000-000000000000}",
+                             *(k.cse.upper() for k in gpp.KINDS.values())):
                 ext.add(CSE_NAMES.get(it[0], it[0]))
     out["other_settings"] = {"computer": counts["computer"], "user": counts["user"], "extensions": sorted(ext)}
     return out
@@ -397,6 +400,87 @@ def drives_put(s: Session, oid: str, body: dict) -> bool:
     version = _bump_version(s, msg, gdir, {"user"})
     items = ext_set(ext_parse(s.val(msg, EXT_ATTR["user"])), drives.CSE, drives.TOOL, bool(drives.items(new_root)))
     s.replace(msg.dn, {"versionNumber": str(version), EXT_ATTR["user"]: ext_format(items) or None})
+    return True
+
+
+# --- other preference lists (local groups, printers, shortcuts) -------------------------------------------
+
+def _prefs_root(gdir: str, kind: gpp.Kind):
+    try:
+        return gpp.parse(kind, sysvol.read_bytes(sysvol.ci_join(gdir, *kind.path)))
+    except gpp.PrefsError as exc:
+        where = "\\".join(kind.path)
+        raise conflict(f"{where}: {exc} Bitte mit der Windows-GPMC prüfen.")
+
+
+def prefs_count(gdir: str, kind: gpp.Kind) -> int:
+    try:
+        return len(gpp.items(_prefs_root(gdir, kind)))
+    except ApiError:
+        return 0
+
+
+def _context(s: Session) -> gpp.Context:
+    netbios = s.settings.get("netbios_domain", "")
+
+    def account(msg):
+        c = s.classes(msg)
+        if "computer" in c or not ({"user", "group"} & c):
+            return None
+        kind = "group" if "group" in c else "user"
+        if kind == "group" and not (s.num(msg, "groupType") & 0x80000000):
+            return None  # distribution groups are not in the token
+        return {"id": s.guid(msg), "name": f"{netbios}\\{s.val(msg, 'sAMAccountName')}", "sid": s.sid(msg), "kind": kind}
+
+    attrs = ["objectClass", "objectGUID", "objectSid", "sAMAccountName", "groupType"]
+
+    def account_by_id(oid):
+        try:
+            msg = s.find(oid, attrs=attrs, what="Konto")
+        except ApiError:
+            return "Konto nicht gefunden."
+        return account(msg) or "Nur Domänenbenutzer und Sicherheitsgruppen."
+
+    def account_by_sid(sid):
+        if not re.match(r"^S-1-[0-9-]+$", sid or ""):
+            return None
+        res = s.search(expression=f"(objectSid={sid})", attrs=attrs)
+        a = account(res[0]) if len(res) else None
+        return {"id": a["id"], "name": a["name"], "kind": a["kind"]} if a else None
+
+    da_sid = f"{s.domain_sid}-512"
+    da = account_by_sid(da_sid)
+    return gpp.Context(group_by_sid=_group_by_sid(s), group_by_id=_group_by_id(s), account_by_id=account_by_id,
+                       account_by_sid=account_by_sid, domain_admins_sid=da_sid,
+                       domain_admins_id=da["id"] if da else "",
+                       domain_admins_name=da["name"] if da else f"{netbios}\\Domain Admins")
+
+
+def prefs_get(s: Session, oid: str, kind: gpp.Kind) -> dict:
+    gid, _ = _find(s, oid)
+    root = _prefs_root(_dir(s, gid), kind)
+    ctx = _context(s)
+    return {"items": [gpp.to_json(kind, e, ctx) for e in gpp.items(root)]}
+
+
+def prefs_put(s: Session, oid: str, kind: gpp.Kind, body: dict) -> bool:
+    """Replace one preference list; returns True when files changed (then SYSVOL ACLs need a reset)."""
+    gid, msg = _find(s, oid)
+    gdir = _dir(s, gid, create=True)
+    root = _prefs_root(gdir, kind)
+    new_root, changed = gpp.apply(kind, root, body.get("items"), _context(s))
+    if not changed:
+        return False
+    has_items = bool(gpp.items(new_root))
+    path = sysvol.ci_join(gdir, *kind.path, create=has_items)
+    if has_items:
+        sysvol.write_bytes(path, gpp.serialize(new_root))
+    else:
+        sysvol.remove(path)
+    version = _bump_version(s, msg, gdir, {kind.scope})
+    attr = EXT_ATTR[kind.scope]
+    items = ext_set(ext_parse(s.val(msg, attr)), kind.cse.upper(), kind.tool.upper(), has_items)
+    s.replace(msg.dn, {"versionNumber": str(version), attr: ext_format(items) or None})
     return True
 
 

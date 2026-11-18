@@ -320,6 +320,46 @@ def main():
     check("{935D1B74-9CB8-4e3c-9914-7DD559B7A417}" in xml and "nas.example.com\\vertrieb" in xml
           and "cpassword" not in xml, "Drives.xml readable over SMB")
 
+    print("== Local groups, printers, shortcuts (Group Policy Preferences, 1.3.0)")
+    _, g = call("GET", f"/api/gpos/{gp['id']}", expect=200)
+    v0 = g["version"]
+    _, lg = call("PUT", f"/api/gpos/{gp['id']}/local-groups", {"items": [
+        {"group": "administrators", "remove_other_groups": True, "members": [{"id": team["id"]}]}]}, expect=200)
+    names = [m["name"] for m in lg["items"][0]["members"]]
+    check(any(n.endswith("\\Domain Admins") for n in names) and any(n.endswith("\\Verkauf-Team") for n in names),
+          f"local administrators keep Domain Admins {names}")
+    check(lg["version"]["computer"] == v0["computer"] + 1 and lg["version"]["user"] == v0["user"],
+          f"local groups raise the computer half {lg['version']}")
+    _, err = call("PUT", f"/api/gpos/{gp['id']}/local-groups", {"items": [
+        {"group": "administrators", "members": [{"id": da["id"], "action": "remove"}]}]}, expect=422)
+    check("items.0.members.0.action" in err["fields"], "removing Domain Admins rejected")
+    _, pr = call("PUT", f"/api/gpos/{gp['id']}/printers", {"items": [
+        {"path": "\\\\print.example.com\\Buero", "default": True, "target": {"group_id": team["id"], "not": False}}]},
+        expect=200)
+    check(pr["items"][0]["target"]["group_name"] == "Verkauf-Team" and pr["version"]["user"] == v0["user"] + 1,
+          f"printer saved {pr['version']}")
+    _, sc = call("PUT", f"/api/gpos/{gp['id']}/shortcuts", {"items": [
+        {"name": "Intranet", "target_type": "url", "target_path": "https://intranet.example.com",
+         "location": "desktop"}]}, expect=200)
+    check(sc["items"][0]["uid"].startswith("{") and sc["version"]["user"] == v0["user"] + 2, "shortcut saved")
+    _, back = call("GET", f"/api/gpos/{gp['id']}/shortcuts", expect=200)
+    check(back["items"] == sc["items"], "shortcuts read back")
+    _, g = call("GET", f"/api/gpos/{gp['id']}", expect=200)
+    check(g["preference_counts"] == {"drives": 2, "local_groups": 1, "printers": 1, "shortcuts": 1} and g["sysvol_ok"],
+          f"preference_counts {g['preference_counts']}")
+    _, out = dexec("ldbsearch", "-H", "/var/lib/samba/private/sam.ldb", f"(name={guid})",
+                   "gPCMachineExtensionNames", "gPCUserExtensionNames")
+    unfolded = out.replace("\n ", "").upper()
+    for pair in ("{17D89FEC-5C44-4972-B12D-241CAEF74509}{79F92669-4224-476C-9C5C-6EFB4D87DF4A}",
+                 "{BC75B1ED-5833-4858-9BB8-CBF0B166DF9D}{A8C42CEA-CDB8-4388-97F4-5831F933DA84}",
+                 "{C418DD9D-0D14-4EFB-8FBF-CFE535C8FAC7}{CEFFA6E2-E3BD-421B-852C-6F6A79A59BC1}"):
+        check(pair in unfolded, f"extension pair {pair[:10]}…")
+    dexec("smbclient", "//127.0.0.1/sysvol", "-U", f"PK95TEST\\Administrator%{PASSWORD}", "-c",
+          f"get {REALM}\\Policies\\{guid}\\Machine\\Preferences\\Groups\\Groups.xml /tmp/Groups.xml")
+    _, xml = dexec("cat", "/tmp/Groups.xml")
+    check('groupSid="S-1-5-32-544"' in xml and 'deleteAllGroups="1"' in xml and "-512" in xml,
+          "Groups.xml readable over SMB")
+
     print("== NETLOGON scripts")
     _, sc = call("PUT", "/api/scripts/logon.bat", {"content": "@echo off\nnet use H: \\\\nas\\home\n"},
                  expect=200)

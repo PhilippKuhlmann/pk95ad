@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from . import VERSION, accounts, directory, dnszone, gpo, gpsettings, idmap, sysvol
+from . import VERSION, accounts, directory, dnszone, gpo, gpp, gpsettings, idmap, sysvol
 from .app import App, manifest
 from .errors import invalid
 from .httpapi import Response, Router
@@ -194,6 +194,24 @@ def build(app: App) -> Router:
             out["version"] = gpo.gpo_get(s, req.params["id"])["version"]
             return out
     r.add("PUT", f"/api/gpos/{ID}/drives", gpo_drives)
+
+    # Other Group Policy Preferences lists (1.3.0): same shape as /drives.
+    for kind in gpp.KINDS.values():
+        def prefs_get(req, s, kind=kind):
+            return gpo.prefs_get(s, req.params["id"], kind)
+
+        def prefs_put(req, kind=kind):
+            app.require_ready()
+            with app.directory.session() as s:
+                changed = gpo.prefs_put(s, req.params["id"], kind, req.json())
+            if changed:
+                sysvol.reset_acls(app.cfg)
+            with app.directory.session() as s:
+                out = gpo.prefs_get(s, req.params["id"], kind)
+                out["version"] = gpo.gpo_get(s, req.params["id"])["version"]
+                return out
+        r.add("GET", f"/api/gpos/{ID}/{kind.route}", ready(prefs_get))
+        r.add("PUT", f"/api/gpos/{ID}/{kind.route}", prefs_put)
 
     def link_add(req, s):
         gpo.link_add(s, req.params["id"], req.json())
