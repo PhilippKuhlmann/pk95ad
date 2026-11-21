@@ -51,6 +51,21 @@ class ParseTest(unittest.TestCase):
         self.assertIsNone(ntptime.parse_tracking(""))
         self.assertEqual(ntptime.parse_tracking(TRACKING_LOCAL)["stratum"], 10)
 
+    def test_real_chrony_output_with_unresolved_pool(self):
+        # chronyc 4.x in the CI container right after PUT /api/time (pool not resolved yet, nothing reached)
+        n = "^,?,162.159.200.1,0,6,0,4294967295,0.000000000,0.000000000,0.000000000\n"
+        names = ("^,?,time.cloudflare.com,0,6,0,4294967295,0.000000000,0.000000000,0.000000000\n"
+                 + "^,?,de.pool.ntp.org,0,6,0,4294967295,0.000000000,0.000000000,0.000000000\n" * 4)
+        s = ntptime.parse_sources(n, names)
+        self.assertEqual(len(s), 5)
+        self.assertEqual((s[0]["name"], s[0]["address"], s[0]["reachable"], s[0]["last_rx_s"]),
+                         ("time.cloudflare.com", "162.159.200.1", False, None))
+        self.assertEqual({(x["name"], x["address"]) for x in s[1:]}, {("de.pool.ntp.org", "")})
+        tracking = ntptime.parse_tracking("7F7F0101,,10,1795242512.354182854,0.000000000,0.000000000,0.000000000,"
+                                          "0.000,0.000,0.000,0.000000000,0.000000000,0.0,Normal\n")
+        ev = ntptime.evaluate(["time.cloudflare.com", "de.pool.ntp.org"], tracking, s, True, 5.0)
+        self.assertEqual((ev["status"], ev["synchronized"], ev["offset_ms"]), ("unknown", False, None))
+
     def test_sources(self):
         s = ntptime.parse_sources(SOURCES_N, SOURCES_NAMES)
         self.assertEqual(s[0], {"address": "192.0.2.1", "name": "de.pool.ntp.org", "stratum": 2, "reachable": True,

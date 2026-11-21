@@ -85,10 +85,20 @@ def parse_sources(text_n: str, text_names: str) -> list[dict]:
     Fields: mode, state (* selected), address, stratum, poll, reach (octal), last rx (s), adjusted offset (s,
     positive = local clock ahead), measured offset, error.
     """
-    rows = [x.split(",") for x in (text_n or "").splitlines() if x.count(",") >= 9]
-    names = [x.split(",") for x in (text_names or "").splitlines() if x.count(",") >= 9]
+    addr_rows = [x.split(",") for x in (text_n or "").splitlines() if x.count(",") >= 9]
+    name_rows = [x.split(",") for x in (text_names or "").splitlines() if x.count(",") >= 9]
+    # The two lists differ in length: pool members that are not resolved yet only show up with -N. Match the
+    # rows by every column but the name/address one.
+    by_key: dict[tuple, list[str]] = {}
+    for p in addr_rows:
+        by_key.setdefault((p[0], p[1], *p[3:]), []).append(p[2])
+    rows = []
+    for p in (name_rows or addr_rows):
+        found = by_key.get((p[0], p[1], *p[3:]))
+        address = found.pop(0) if found else ("" if name_rows else p[2])
+        rows.append([p[0], p[1], address, *p[3:], p[2]])
     out = []
-    for i, p in enumerate(rows):
+    for p in rows:
         if p[0] not in ("^", "="):
             continue  # refclocks and peers are not ours
         try:
@@ -97,6 +107,8 @@ def parse_sources(text_n: str, text_names: str) -> list[dict]:
             reach = 0
         try:
             last_rx = int(p[6])
+            if last_rx >= 0xFFFFFFFF:  # chrony's "never"
+                last_rx = None
         except ValueError:
             last_rx = None
         try:
@@ -105,7 +117,7 @@ def parse_sources(text_n: str, text_names: str) -> list[dict]:
             offset_ms = None
         out.append({
             "address": p[2],
-            "name": names[i][2] if i < len(names) else p[2],
+            "name": p[10] if len(p) > 10 else p[2],
             "stratum": int(p[3]) if p[3].isdigit() else 0,
             "reachable": reach != 0,
             "selected": p[1] == "*",
