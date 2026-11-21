@@ -310,6 +310,8 @@ back to the plain host clock (`local stratum 10`) when none is reachable. Samba'
   after chronyd started), `error` (|offset| ≥ 120 s), `unknown` (no servers, chronyd not running, still starting).
 - `message`: German, e.g. „Die Uhr des Proxmox-Hosts geht 3,4 s vor. Ab 5 Minuten scheitern Kerberos-Anmeldungen.
   Zeitsynchronisation auf dem Proxmox-Host prüfen.“ or „Kein NTP-Server erreichbar (de.pool.ntp.org).“
+  With `status: unknown`: „Keine Referenz eingestellt.“ when `servers` is empty, `""` while still checking
+  (Core shows „wird geprüft“). Only `warn` and `error` go into the `warnings` of `/api/domain`.
 - `serving`: the `ntp` object of `/api/status` without `time` (signed NTP for domain members).
 - Works before setup too (then with the default servers). Every `chronyc` call has a 1.5 s timeout.
 

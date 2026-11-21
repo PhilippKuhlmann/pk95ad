@@ -100,7 +100,8 @@ class EvaluateTest(unittest.TestCase):
     def test_unknown_and_unreachable(self):
         unreachable = ntptime.parse_sources(SOURCES_N.splitlines()[2], SOURCES_NAMES.splitlines()[2])
         starting = ntptime.evaluate(self.SRV, None, unreachable, True, 30.0)
-        self.assertEqual((starting["status"], starting["offset_ms"]), ("unknown", None))
+        self.assertEqual((starting["status"], starting["offset_ms"], starting["message"]), ("unknown", None, ""))
+        self.assertEqual(ntptime.evaluate([], None, [], True, 5.0)["message"], "Keine Referenz eingestellt.")
         late = ntptime.evaluate(self.SRV, None, unreachable, True, 700.0)
         self.assertEqual((late["status"], late["message"]), ("warn", "Kein NTP-Server erreichbar (de.pool.ntp.org)."))
         self.assertEqual(ntptime.evaluate([], None, [], True, 700.0)["status"], "unknown")

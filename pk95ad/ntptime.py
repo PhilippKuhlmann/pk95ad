@@ -157,7 +157,7 @@ def evaluate(servers: list[str], tracking: dict | None, sources: list[dict], run
     selected = next((s for s in sources if s["selected"]), None)
     out = {"synchronized": selected is not None, "offset_ms": None, "source": "", "status": "unknown", "message": ""}
     if not servers:
-        out["message"] = "Kein NTP-Referenzserver eingestellt. Die Uhr des Proxmox-Hosts wird nicht geprüft."
+        out["message"] = "Keine Referenz eingestellt."
         return out
     if not running:
         out["message"] = "Der NTP-Dienst läuft nicht."
@@ -165,8 +165,7 @@ def evaluate(servers: list[str], tracking: dict | None, sources: list[dict], run
     if selected is None:
         if running_for_s >= STARTUP_S and not any(s["reachable"] for s in sources):
             out.update(status="warn", message=f"Kein NTP-Server erreichbar ({', '.join(servers)}).")
-        else:
-            out["message"] = "Der Abgleich mit den NTP-Servern läuft noch."
+        # still starting: no message, Core shows "wird geprüft"
         return out
     if tracking is not None:
         offset_s = -tracking["correction_s"]  # correction > 0: clock slow
