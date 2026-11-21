@@ -7,7 +7,7 @@ import os
 import shutil
 import threading
 
-from . import VERSION, events, resolver, smbconf, validate
+from . import VERSION, events, ntptime, resolver, smbconf, validate
 from .directory import Directory
 from .errors import NOT_READY, conflict, invalid
 from .monitor import DbCheck, Monitor
@@ -127,6 +127,34 @@ class App:
             message = ""
         return {"running": running, "available": running and not self.ntp_error, "message": message}
 
+    def ntp_servers(self) -> list[str]:
+        s = self.settings or {}
+        return list(s["ntp_servers"]) if isinstance(s.get("ntp_servers"), list) else list(ntptime.DEFAULT_SERVERS)
+
+    def time_info(self) -> dict:
+        running = self.cfg.ntp and self.chrony.running()
+        running_for = max(0.0, (now_ms() - self.chrony.since) / 1000) if running else 0.0
+        return ntptime.time_info(self.ntp_servers(), running, running_for, self.ntp_info())
+
+    def ntp_status(self) -> dict:
+        """ntp object of /api/status and /api/domain: serving state plus the compact time."""
+        return {**self.ntp_info(), "time": ntptime.compact(self.time_info())}
+
+    def set_ntp_servers(self, body: dict) -> None:
+        """PUT /api/time: save, rewrite chrony.conf, restart only chronyd (Samba stays up)."""
+        self.require_ready()
+        servers = ntptime.check_servers(body)
+        with self._lock:
+            settings = dict(self.settings)
+            settings["ntp_servers"] = servers
+            self.save_settings(settings)
+            if self.cfg.ntp:
+                write_text(self.cfg.chrony_conf, smbconf.chrony(self.cfg, servers))
+                if self.cfg.manage_processes:
+                    self.chrony.stop(timeout=10)
+                    self.ntp_error = ""
+                    self.chrony.start()
+
     def prepare_runtime(self) -> None:
         """smb.conf, krb5.conf and chrony.conf from the settings (on every start)."""
         if not self.settings:
@@ -147,7 +175,7 @@ class App:
         except OSError as exc:
             log.warning("cannot prepare %s: %s", signd, exc)
         if self.cfg.ntp:
-            write_text(self.cfg.chrony_conf, smbconf.chrony(self.cfg))
+            write_text(self.cfg.chrony_conf, smbconf.chrony(self.cfg, self.ntp_servers()))
             if self.cfg.manage_processes:
                 os.makedirs("/run/chrony", exist_ok=True)
 
@@ -240,7 +268,7 @@ class App:
             "state": st,
             "started_at": self.started_at,
             "samba": samba,
-            "ntp": self.ntp_info(),
+            "ntp": self.ntp_status(),
             "domain": None if not s else {k: s.get(k, "") for k in ("realm", "netbios_domain", "hostname",
                                                                      "host_ip")},
         }

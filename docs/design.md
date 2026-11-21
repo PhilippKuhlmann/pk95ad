@@ -132,6 +132,16 @@ well) and checks `getfattr -n user.NTACL` on SYSVOL, `samba-tool ntacl get`, `sa
 to SYSVOL/NETLOGON. A real domain join
 needs the LXC and a Windows client.
 
+## Time (1.4.0)
+
+The DC's clock is the Proxmox host's clock: `chronyd -x` in the unprivileged LXC can never set it. The NTP servers
+in the settings (`ntp_servers`, default `de.pool.ntp.org`) are only a reference: chrony measures the host clock
+against them, `GET /api/time` reports the offset, and the dashboard warns from 1 s on (error from 120 s; Kerberos
+tolerates 5 minutes). Domain members keep getting signed NTP from chronyd – with `-x` chrony serves its estimate of
+true time (host clock plus measured correction) while a source is selected, otherwise the host clock at stratum 10.
+Samba's Kerberos uses the uncorrected host clock, which is why a wrong host clock must be fixed on the host.
+Changing the servers rewrites `/etc/chrony/pk95ad.conf` and restarts only chronyd.
+
 ## Unix IDs (unprivileged LXC)
 
 The LXC maps only 65536 IDs (`/proc/self/uid_map`: `0 100000 65536`), so inside it only the IDs 0–65535
