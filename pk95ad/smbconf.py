@@ -74,10 +74,14 @@ def hosts_with_dc(text: str, s: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def chrony(cfg) -> str:
-    """chronyd serves the (host-synchronised) local clock and signs replies for domain members."""
+def chrony(cfg, servers: list[str] | None = None) -> str:
+    """chronyd -x: measures the host clock against the reference servers (never sets it), serves signed NTP
+    to domain members, and falls back to the local clock (stratum 10) when no server is reachable."""
+    from .ntptime import chrony_lines
+
     return "\n".join([
-        "# Written by PK95 AD on every start.",
+        "# Written by PK95 AD on every start. Reference servers: PK95 Core → AD → Domäne → Zeit.",
+        *chrony_lines(servers or []),
         "local stratum 10",
         "allow all",
         f"ntpsigndsocket {os.path.join(cfg.samba_dir, 'ntp_signd')}",

@@ -52,9 +52,26 @@ def build(app: App) -> Router:
         except Exception as exc:  # noqa: BLE001 - informational, must not break the domain page
             ids = {"xid_range": [0, 0], "rfc2307_range": [idmap.RFC2307_LOW, idmap.RFC2307_HIGH], "next_xid": 0,
                    "allocated": 0, "ok": False, "message": f"idmap.ldb nicht lesbar: {exc}"}
-        return {**directory.domain_info(s), "ntp": app.ntp_info(), "idmap": ids,
-                "resolver": dict(app.resolver_status)}
+        ntp = app.ntp_status()
+        resolver = dict(app.resolver_status)
+        warnings = []
+        if ntp["time"]["status"] in ("warn", "error") and ntp["time"]["message"]:
+            warnings.append(ntp["time"]["message"])
+        if not ntp["available"] and ntp["message"]:
+            warnings.append(ntp["message"])
+        if not resolver.get("ok") and resolver.get("message") and resolver["message"] != "Noch nicht geprüft.":
+            warnings.append(resolver["message"])
+        if not ids.get("ok") and ids.get("message"):
+            warnings.append(ids["message"])
+        return {**directory.domain_info(s), "ntp": ntp, "idmap": ids, "resolver": resolver, "warnings": warnings}
     r.add("GET", "/api/domain", ready(lambda req, s: domain_info(s)))
+
+    r.add("GET", "/api/time", lambda req: app.time_info())
+
+    def time_put(req):
+        app.set_ntp_servers(req.json())
+        return app.time_info()
+    r.add("PUT", "/api/time", time_put)
 
     def domain_settings(req):
         app.update_forwarder(req.json())

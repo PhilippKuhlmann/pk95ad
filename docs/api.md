@@ -40,7 +40,7 @@ answers (everything else `401`). Useful for scripts and tests.
 
 ## Core protocol routes
 
-- `GET /core/health` → `200 {"ok": true, "version": "1.3.0", "state": "ready"}` as soon as the API serves
+- `GET /core/health` → `200 {"ok": true, "version": "1.4.0", "state": "ready"}` as soon as the API serves
   requests – also before setup (`state: "unconfigured"`) and while Samba is down (that shows up in
   `/api/status` and as event `ad.samba.down`).
 - `GET /core/manifest` → see below.
@@ -55,7 +55,7 @@ answers (everything else `401`). Useful for scripts and tests.
 {
   "id": "ad",
   "name": "PK95 AD",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "protocol": 1,
   "icon": "key",
   "menu": [
@@ -158,7 +158,7 @@ start Samba, wait until LDAP answers, send `ad.setup.done`.
 
 ```json
 {
-  "version": "1.3.0",
+  "version": "1.4.0",
   "core_mode": true,
   "state": "ready",
   "started_at": 1762700000000,
@@ -176,7 +176,8 @@ start Samba, wait until LDAP answers, send `ad.setup.done`.
 ```
 
 `ntp`: signed NTP for domain members (`chronyd -x`: serves the host-synchronised clock, never sets it).
-It never blocks Samba. `available: false` with a German `message` when chronyd cannot run or port 123/udp is
+New in 1.4.0: `time` = `{"now", "offset_ms", "source", "synchronized", "status", "message"}` as in
+`GET /api/time`. It never blocks Samba. `available: false` with a German `message` when chronyd cannot run or port 123/udp is
 taken („NTP nicht verfügbar: Port 123/udp ist im LXC belegt.“); `PK95AD_NTP=0` switches it off.
 
 `samba.state`: `stopped` (not set up), `starting`, `running`, `restarting` (crashed, restarted with
@@ -213,7 +214,9 @@ unexpected exit. `domain` is `null` before setup.
 
 FSMO values are the DC names (`hostname` of the owning server). With only one DC all are this DC.
 `dns_port` is stable (the Core module uses it for the conditional forwarding rule in PK95 DNS).
-`ntp`: same object as in `/api/status`.
+`ntp`: same object as in `/api/status` (including `time`, new in 1.4.0).
+`warnings` (new in 1.4.0): German sentences for the dashboard, empty when all is well – the time `message` at
+status warn/error, the NTP service when it is not available, `resolver` and `idmap` when not ok.
 `resolver` (new in 1.1.1): whether the DC resolves through PK95 DNS (docs/design.md → DNS of the DC itself).
 `{"ok": true, "nameserver": "127.0.0.1", "message": ""}`; `ok: false` with a German `message` while nothing on
 `127.0.0.1:53` answers the realm (no PK95 DNS, or the conditional forwarding rule is missing) – Samba then logs
@@ -276,6 +279,49 @@ Stored on the domain object (like `samba-tool domain passwordsettings`), which i
 
 `output` is cut to the last 64 KiB. Before the first run all fields are zero/empty and `ok` is `null`.
 The daily automatic check runs without `--fix`.
+
+## Time and NTP reference servers (new in 1.4.0)
+
+chronyd runs with `-x` in the unprivileged LXC: it **never sets the clock** – the clock belongs to the Proxmox host.
+The configured servers are a reference: chrony measures the host clock against them (offset and drift) and the
+app reports and warns. chronyd keeps serving signed NTP to domain members (`ntpsigndsocket`); with `-x` it serves
+its **estimate of true time** (host clock corrected by the measured offset) while a source is selected, and falls
+back to the plain host clock (`local stratum 10`) when none is reachable. Samba's own Kerberos on the DC uses the
+**uncorrected** host clock, so a wrong host clock breaks logons from 5 minutes on even though clients get good time.
+
+### `GET /api/time`
+
+```json
+{ "now": "2026-11-21T06:21:30.123Z",
+  "servers": ["de.pool.ntp.org"],
+  "sources": [ { "address": "192.0.2.1", "name": "de.pool.ntp.org", "stratum": 2, "reachable": true,
+                 "selected": true, "offset_ms": 1.8, "last_rx_s": 33 } ],
+  "synchronized": true, "offset_ms": 1.8, "source": "de.pool.ntp.org",
+  "status": "ok", "message": "",
+  "serving": { "running": true, "available": true, "message": "" } }
+```
+
+- `now`: container clock (= host clock), UTC with milliseconds.
+- `sources`: from `chronyc -c -n sources` / `-N sources` (pool members show the pool name); `offset_ms` and
+  `last_rx_s` are `null` while a source was never reached.
+- `offset_ms`: host clock minus true time (positive = host clock fast), from `chronyc -c tracking`; `null` while no
+  source is selected. `source`: name of the selected source.
+- `status`: `ok` (|offset| < 1 s), `warn` (1 s ≤ |offset| < 120 s, or servers are set but none was reachable 10 minutes
+  after chronyd started), `error` (|offset| ≥ 120 s), `unknown` (no servers, chronyd not running, still starting).
+- `message`: German, e.g. „Die Uhr des Proxmox-Hosts geht 3,4 s vor. Ab 5 Minuten scheitern Kerberos-Anmeldungen.
+  Zeitsynchronisation auf dem Proxmox-Host prüfen.“ or „Kein NTP-Server erreichbar (de.pool.ntp.org).“
+  With `status: unknown`: „Keine Referenz eingestellt.“ when `servers` is empty, `""` while still checking
+  (Core shows „wird geprüft“). Only `warn` and `error` go into the `warnings` of `/api/domain`.
+- `serving`: the `ntp` object of `/api/status` without `time` (signed NTP for domain members).
+- Works before setup too (then with the default servers). Every `chronyc` call has a 1.5 s timeout.
+
+### `PUT /api/time`
+
+Body `{"servers": ["de.pool.ntp.org", "ptbtime1.ptb.de"]}` → `200` like `GET` (right after the change mostly
+`status: "unknown"`). 0–5 host names or IPv4/IPv6 addresses, no port, no options, no duplicates; `[]` = no
+reference (local clock only). Default `["de.pool.ntp.org"]`. Names containing `pool.ntp.org` become
+`pool <name> iburst maxsources 3`, others `server <name> iburst`. Saves, rewrites chrony.conf and restarts only
+chronyd – Samba stays up. `422` with `fields` `servers` (not a list, more than 5) or `servers.N`; `409` before setup.
 
 ## Organizational units
 

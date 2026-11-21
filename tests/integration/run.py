@@ -423,6 +423,31 @@ def main():
     check(rc == 0 and "already exist" not in out.lower(), f"after: samba_dnsupdate clean (rc {rc})")
     subprocess.run(["docker", "rm", "-f", "pk95dns"], capture_output=True)  # shares our netns: gone before restart
 
+    print("== Time and NTP reference servers (1.4.0)")
+    _, t = call("GET", "/api/time", expect=200)
+    check(t["servers"] == ["de.pool.ntp.org"] and t["now"].endswith("Z") and t["serving"]["running"],
+          f"time default {t['status']} {t['message']}")
+    _, err = call("PUT", "/api/time", {"servers": ["ntp.example.com:123"]}, expect=422)
+    check("servers.0" in err["fields"], "server with port rejected")
+    call("PUT", "/api/time", {"servers": [f"n{i}.example.com" for i in range(6)]}, expect=422)
+    _, t = call("PUT", "/api/time", {"servers": ["time.cloudflare.com", "de.pool.ntp.org"]}, expect=200)
+    check(t["servers"] == ["time.cloudflare.com", "de.pool.ntp.org"], "servers saved")
+    _, conf = dexec("cat", "/etc/chrony/pk95ad.conf")
+    check("server time.cloudflare.com iburst" in conf and "pool de.pool.ntp.org iburst maxsources 3" in conf
+          and "local stratum 10" in conf, "chrony.conf has the reference servers")
+    t = wait(lambda: (lambda x: x if x["sources"] and x["serving"]["running"] else None)(call("GET", "/api/time")[1]),
+             "chrony sources", 90)
+    print("    sources: " + ", ".join(f"{s['name']}={s['address']} reach={s['reachable']} sel={s['selected']}"
+                                      for s in t["sources"]))
+    dexec("chronyc", "-c", "-n", "tracking", ok=False)  # real CSV samples for the unit tests
+    dexec("chronyc", "-c", "-n", "sources", ok=False)
+    dexec("chronyc", "-c", "-N", "sources", ok=False)
+    check(t["status"] in ("ok", "warn", "unknown"), f"time status {t['status']} {t['offset_ms']} {t['message']}")
+    _, st = call("GET", "/api/status", expect=200)
+    check(st["samba"]["state"] == "running" and "time" in st["ntp"], "Samba untouched, status has ntp.time")
+    _, d = call("GET", "/api/domain", expect=200)
+    check(isinstance(d["warnings"], list) and "time" in d["ntp"], f"domain warnings {d['warnings']}")
+
     print("== cleanup and move")
     _, other = call("POST", "/api/ous", {"name": "Andere"}, expect=201)
     call("POST", "/api/move", {"ids": [u["id"], team["id"]], "target_id": other["id"]}, expect=200)
