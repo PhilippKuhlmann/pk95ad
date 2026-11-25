@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import base64
+import os
 import re
+import secrets
+import string
+import subprocess
 
 from . import validate
 from .directory import (
@@ -481,6 +486,7 @@ def _group(s: Session, msg, primary_counts=None, details: bool = False) -> dict:
         "ou_id": ou_id,
         "ou_path": ou_path,
         "member_count": len(s.vals(msg, "member")) + primary,
+        "sid": sid,
         "builtin": builtin,
         "protected": builtin,
     }
@@ -784,6 +790,127 @@ def computer_delete(s: Session, oid: str) -> None:
     if s.num(msg, "userAccountControl") & UF_SERVER_TRUST:
         raise forbidden("Domänencontroller können nicht gelöscht werden.")
     s.db.delete(msg.dn, ["tree_delete:1"])
+
+
+# --- offline domain join (member servers, 1.5.0) --------------------------------------------------------
+
+UF_WORKSTATION_TRUST = 0x1000
+ENC_AES = 24  # AES128 | AES256
+_PW_ALPHABET = string.ascii_letters + string.digits + "!#%+-.:=?@_~"
+
+
+class OdjError(Exception):
+    """Composing the offline join blob failed (German message without secrets)."""
+
+
+def machine_password(length: int = 120) -> str:
+    while True:
+        pw = "".join(secrets.choice(_PW_ALPHABET) for _ in range(length))
+        if (any(c.islower() for c in pw) and any(c.isupper() for c in pw) and any(c.isdigit() for c in pw)
+                and any(not c.isalnum() for c in pw)):
+            return pw
+
+
+def compose_odj(s: Session, name: str, password: str, run=subprocess.run) -> str:
+    """net offlinejoin composeodj: builds the provisioning blob locally, no DC call and no admin credentials.
+
+    The password goes in through the PASSWD environment variable, never on the command line; -U names the
+    account (without it net would take the DC's own NetBIOS name).
+    """
+    st = s.settings
+    dom = s.search(base=s.base, scope="base", attrs=["objectGUID"])[0]
+    argv = ["net", "offlinejoin", "composeodj", f"--realm={s.realm.upper()}", f"--workgroup={st['netbios_domain']}",
+            "-U", f"{name.upper()}$", f"domain_sid={s.domain_sid}", f"domain_guid={s.guid(dom)}",
+            f"forest_name={s.realm}", "-S", f"{st['hostname']}.{s.realm}", "-I", st["host_ip"], "printblob"]
+    env = {k: v for k, v in os.environ.items() if k not in ("USER", "LOGNAME", "PASSWD_FD", "PASSWD_FILE")}
+    env["PASSWD"] = password
+    try:
+        res = run(argv, capture_output=True, text=True, timeout=60, env=env, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise OdjError(f"net offlinejoin composeodj lief nicht: {exc}") from None
+    blob = "".join((res.stdout or "").split())
+    if res.returncode != 0 or not blob:
+        detail = ((res.stderr or res.stdout or "").strip().splitlines() or [""])[-1].replace(password, "***")
+        raise OdjError(f"net offlinejoin composeodj ist fehlgeschlagen (Code {res.returncode}). {detail}".strip())
+    try:
+        base64.b64decode(blob, validate=True)
+    except ValueError:
+        raise OdjError("net offlinejoin composeodj lieferte keine Base64-Daten.") from None
+    return blob
+
+
+def odj_flow(create, compose, rollback):
+    """create() -> (dn, created, password); compose(password) -> blob; on failure a created account is deleted."""
+    dn, created, password = create()
+    try:
+        return dn, created, compose(password)
+    except Exception:
+        if created:
+            rollback(dn)
+        raise
+
+
+def computer_odj(s: Session, body: dict, compose=compose_odj) -> dict:
+    """POST /api/computers/odj: create or reset a computer account and return its offline join blob."""
+    f = Fields()
+    name, err = validate.dc_hostname(body.get("name"))
+    f.add("name", err)
+    dns = validate.text(body.get("dns_hostname")).lower().rstrip(".") or f"{name}.{s.realm}"
+    if not err and dns != f"{name}.{s.realm}":
+        f.add("dns_hostname", f"Muss {name}.{s.realm} sein.")
+    desc, err = validate.optional_text(body.get("description"), 1024)
+    f.add("description", err)
+    reset, err = validate.boolean(body.get("reset", False))
+    f.add("reset", err)
+    parent = s.dn(f"CN=Computers,{s.base_str}")
+    if body.get("ou_id"):
+        try:
+            parent = s.target_container(body["ou_id"], "ou_id")
+        except ApiError as exc:
+            f.update(exc.fields or {"ou_id": exc.message})
+    f.raise_if_any()
+
+    sam = f"{name.upper()}$"
+    res = s.search(expression=f"(sAMAccountName={_enc(s, sam)})", attrs=COMPUTER_ATTRS)
+    existing = res[0] if len(res) else None
+    if existing is not None:
+        if "computer" not in s.classes(existing):
+            raise ApiError(409, f"Der Name {name.upper()} ist schon vergeben (kein Computerkonto).")
+        if s.num(existing, "userAccountControl") & UF_SERVER_TRUST:
+            raise forbidden("Für Domänencontroller gibt es keinen Offline-Beitritt.")
+        if not reset:
+            raise ApiError(409, f"Das Computerkonto {name.upper()} gibt es bereits.")
+    spns = [f"HOST/{name}", f"HOST/{dns}", f"RestrictedKrbHost/{name}", f"RestrictedKrbHost/{dns}"]
+
+    def create():
+        password = machine_password()
+        pwd = ('"' + password + '"').encode("utf-16-le")
+        if existing is not None:  # reset: new password, the old join stops working on purpose
+            attrs = {"unicodePwd": pwd, "dNSHostName": dns, "servicePrincipalName": spns,
+                     "msDS-SupportedEncryptionTypes": str(ENC_AES)}
+            if desc:
+                attrs["description"] = desc
+            s.replace(existing.dn, attrs)
+            return existing.dn, False, password
+        dn = s.child_dn(parent, "CN", name.upper())
+        if s.exists(dn):
+            raise ApiError(409, f"In diesem Container gibt es schon ein Objekt {name.upper()}.")
+        msg = {"dn": str(dn), "objectClass": "computer", "sAMAccountName": sam,
+               "userAccountControl": str(UF_WORKSTATION_TRUST), "dNSHostName": dns, "servicePrincipalName": spns,
+               "msDS-SupportedEncryptionTypes": str(ENC_AES), "unicodePwd": pwd}
+        if desc:
+            msg["description"] = desc
+        s.db.add(msg)
+        return dn, True, password
+
+    try:
+        dn, created, blob = odj_flow(create, lambda pw: compose(s, name, pw), lambda dn: s.db.delete(dn))
+    except OdjError as exc:
+        raise ApiError(500, f"Die Offline-Join-Datei konnte nicht erstellt werden; das Konto wurde nicht angelegt. {exc}")
+    st = s.settings
+    return {"computer": _computer(s, s.by_dn(dn, COMPUTER_ATTRS), details=True), "created": created, "odj": blob,
+            "domain": {"realm": s.realm, "netbios_domain": st.get("netbios_domain", ""),
+                       "dc": {"hostname": st.get("hostname", ""), "ip": st.get("host_ip", "")}}}
 
 
 def locked_users(s: Session) -> list[dict]:

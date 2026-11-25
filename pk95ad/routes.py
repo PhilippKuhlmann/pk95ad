@@ -147,6 +147,9 @@ def build(app: App) -> Router:
         accounts.computer_delete(s, req.params["id"])
         return Response(204)
     r.add("DELETE", f"/api/computers/{ID}", ready(computer_delete))
+    # Offline domain join for member servers (1.5.0). Every answer carries Cache-Control: no-store; the
+    # blob is never logged or stored.
+    r.add("POST", "/api/computers/odj", ready(lambda req, s: accounts.computer_odj(s, req.json())))
 
     # DNS
     zone = "{zone:[A-Za-z0-9._-]+}"
