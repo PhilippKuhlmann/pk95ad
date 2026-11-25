@@ -8,6 +8,7 @@ container (user.NTACL, ntacl get, gpo aclcheck, SMB access). Exits non-zero on t
 
 from __future__ import annotations
 
+import base64
 import json
 import secrets
 import subprocess
@@ -447,6 +448,37 @@ def main():
     check(st["samba"]["state"] == "running" and "time" in st["ntp"], "Samba untouched, status has ntp.time")
     _, d = call("GET", "/api/domain", expect=200)
     check(isinstance(d["warnings"], list) and "time" in d["ntp"], f"domain warnings {d['warnings']}")
+
+    print("== Offline domain join for member servers (1.5.0)")
+    req = urllib.request.Request(BASE + "/api/computers/odj", method="POST",
+                                 data=json.dumps({"name": "files", "description": "PK95 File"}).encode(),
+                                 headers={"Authorization": "Bearer " + TOKEN, "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=120) as resp:
+        odj = json.loads(resp.read())
+        check(resp.status == 200 and resp.headers.get("Cache-Control") == "no-store", "odj 200 with no-store")
+    blob = base64.b64decode(odj["odj"], validate=True)
+    check(odj["created"] and len(blob) > 100 and odj["computer"]["name"] == "FILES"
+          and odj["computer"]["dns_hostname"] == f"files.{REALM}" and odj["domain"]["realm"] == REALM,
+          f"odj blob ({len(blob)} bytes) for FILES")
+    _, err = call("POST", "/api/computers/odj", {"name": "files"}, expect=409)
+    check("FILES" in err["error"], "existing account → 409")
+    _, again = call("POST", "/api/computers/odj", {"name": "files", "reset": True}, expect=200)
+    check(not again["created"] and again["odj"] != odj["odj"], "reset → new password, new blob")
+    call("POST", "/api/computers/odj", {"name": "dc1", "reset": True}, expect=403)
+    _, err = call("POST", "/api/computers/odj", {"name": "nas", "dns_hostname": "nas.example.org"}, expect=422)
+    check("dns_hostname" in err["fields"], "foreign DNS suffix → 422")
+    _, out = dexec("ldbsearch", "-H", "/var/lib/samba/private/sam.ldb", "(sAMAccountName=FILES$)",
+                   "userAccountControl", "servicePrincipalName", "msDS-SupportedEncryptionTypes", "dNSHostName")
+    check("userAccountControl: 4096" in out and f"HOST/files.{REALM}" in out
+          and "msDS-SupportedEncryptionTypes: 24" in out, "computer account attributes")
+    logs = subprocess.run(["docker", "logs", CONTAINER], capture_output=True, text=True).stdout
+    check(odj["odj"][:40] not in logs and again["odj"][:40] not in logs, "blob not in the container log")
+    _, groups = call("GET", "/api/groups", expect=200)
+    check(all(g["sid"].startswith("S-1-5-") for g in groups["items"]), "group list has sid")
+    _, ports = dexec("ss", "-ltnH")
+    wild = [x for x in ports.splitlines() if any(f"{a}:{p} " in x for a in ("0.0.0.0", "*", "[::]")
+                                                 for p in ("88", "389", "445", "636", "3268"))]
+    check(not wild, f"AD ports only on lo and the DC address (wildcard: {wild})")
 
     print("== cleanup and move")
     _, other = call("POST", "/api/ous", {"name": "Andere"}, expect=201)

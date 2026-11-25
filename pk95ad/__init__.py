@@ -2,4 +2,4 @@
 
 import os
 
-VERSION = os.environ.get("PK95AD_VERSION", "") or "1.4.0"
+VERSION = os.environ.get("PK95AD_VERSION", "") or "1.5.0"

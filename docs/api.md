@@ -40,7 +40,7 @@ answers (everything else `401`). Useful for scripts and tests.
 
 ## Core protocol routes
 
-- `GET /core/health` → `200 {"ok": true, "version": "1.4.0", "state": "ready"}` as soon as the API serves
+- `GET /core/health` → `200 {"ok": true, "version": "1.5.0", "state": "ready"}` as soon as the API serves
   requests – also before setup (`state: "unconfigured"`) and while Samba is down (that shows up in
   `/api/status` and as event `ad.samba.down`).
 - `GET /core/manifest` → see below.
@@ -55,7 +55,7 @@ answers (everything else `401`). Useful for scripts and tests.
 {
   "id": "ad",
   "name": "PK95 AD",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "protocol": 1,
   "icon": "key",
   "menu": [
@@ -158,7 +158,7 @@ start Samba, wait until LDAP answers, send `ad.setup.done`.
 
 ```json
 {
-  "version": "1.4.0",
+  "version": "1.5.0",
   "core_mode": true,
   "state": "ready",
   "started_at": 1762700000000,
@@ -437,7 +437,7 @@ Editable with `PUT`: all of these except `password`, `ou_id` (use `/api/move`) a
 {
   "id": "…", "name": "Vertrieb", "description": "", "email": "",
   "type": "security", "scope": "global",
-  "ou_id": "…", "ou_path": "Firma", "member_count": 4,
+  "ou_id": "…", "ou_path": "Firma", "member_count": 4, "sid": "S-1-5-21-…-1105",
   "builtin": false, "protected": false
 }
 ```
@@ -490,6 +490,40 @@ Details add `dn`, `sid`, `groups` (`[{"id", "name"}]`).
 
 Domain controllers (`is_dc`) cannot be disabled, deleted or moved out of `Domain Controllers` (`403`).
 Joining a computer happens on the computer (with a domain account); no pre-staging in v1.
+
+### `POST /api/computers/odj` (new in 1.5.0) – offline domain join for member servers
+
+Creates (or resets) a computer account and returns a provisioning blob for `net offlinejoin requestodj` on the
+member server (PK95 File). No admin password: the account is written in-process as system with a random
+120-character password, and the blob is composed locally with `net offlinejoin composeodj` (the password goes in
+through the environment, never on a command line).
+
+```json
+{ "name": "files", "dns_hostname": "files.ad.example.com", "ou_id": "", "description": "PK95 File", "reset": false }
+```
+
+| field | rule |
+|---|---|
+| `name` | 1–15 chars `a-z0-9-` (like the DC name); the account is `FILES$` |
+| `dns_hostname` | default and only allowed value `<name>.<realm>` (`422 fields.dns_hostname`) |
+| `ou_id` | optional target container, default `CN=Computers` |
+| `description` | optional, max 1024 |
+| `reset` | the account exists: `false` → `409 {"error": "Das Computerkonto FILES gibt es bereits."}`; `true` → new password and new blob (the old join stops working: rejoin) |
+
+The account gets `userAccountControl` 4096, `dNSHostName`, `servicePrincipalName` `HOST/<name>`, `HOST/<fqdn>`,
+`RestrictedKrbHost/<name>`, `RestrictedKrbHost/<fqdn>` and `msDS-SupportedEncryptionTypes` 24 (AES).
+Domain controllers → `403`. A name used by a user or group → `409`.
+
+→ `200`, `Cache-Control: no-store` (like every answer of the API):
+
+```json
+{ "computer": { …computer details… }, "created": true, "odj": "<base64 provisioning data>",
+  "domain": { "realm": "ad.example.com", "netbios_domain": "EXAMPLE", "dc": { "hostname": "dc1", "ip": "192.168.1.10" } } }
+```
+
+The blob and the password are never logged or stored. If composing fails, a newly created account is deleted again
+(`500` with a German message); after a failed reset the account keeps the new, unknown password – send the request
+again.
 
 ## DNS of the AD zones
 
